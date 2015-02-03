@@ -20,6 +20,8 @@ An implementation of the SecretStore that uses the KMIP backend.
 from kmip.services import kmip_client
 
 import base64
+import os
+import stat
 
 from kmip.core import enums
 from kmip.core.factories import attributes
@@ -80,6 +82,11 @@ CONF.register_opts(kmip_opts, group=kmip_opt_group)
 attribute_debug_msg = "Created attribute type %s with value %s"
 
 
+class KMIPSecretStoreError(Exception):
+    def __init__(self, what):
+        super(KMIPSecretStoreError, self).__init__(what)
+
+
 class KMIPSecretStore(ss.SecretStoreBase):
 
     KEY_UUID = "key_uuid"
@@ -110,7 +117,8 @@ class KMIPSecretStore(ss.SecretStoreBase):
                 enums.CryptographicAlgorithm.TRIPLE_DES}
         }
 
-        # TODO(tkelsey): check the certificate file has good permissions
+        if conf.kmip_plugin.keyfile is not None:
+            self._validate_keyfile_permissions(conf.kmip_plugin.keyfile)
 
         credential_type = credentials.CredentialType.USERNAME_AND_PASSWORD
         credential_value = {'Username': conf.kmip_plugin.username,
@@ -510,3 +518,20 @@ class KMIPSecretStore(ss.SecretStoreBase):
         )
         LOG.debug("ERROR from KMIP server: %s", msg)
         raise ss.SecretGeneralException(msg)
+
+    def _validate_keyfile_permissions(self, path):
+        """Check that file has permissions appropriate for a sensitive key
+
+        Key files are extremely sensitive, they should be owned by the user
+        who they relate to. They should be readable only (to avoid accidental
+        changes). They should not be readable or writeable by any other user.
+
+        :raises: KMIPSecretStoreError
+        """
+        expected = (stat.S_IRUSR | stat.S_IFREG)  # 0o100400
+        st = os.stat(path)
+        if st.st_mode != expected:
+            raise KMIPSecretStoreError(
+                u._('Bad key file permissions found, expected 400 '
+                    'for path: {file_path}').format(file_path=path)
+            )

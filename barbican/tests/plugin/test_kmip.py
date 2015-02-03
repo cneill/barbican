@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import socket
+import stat
 
 import mock
 
@@ -420,3 +421,32 @@ class WhenTestingKMIPSecretStore(utils.BaseTestCase):
     def test_map_algorithm_kmip_to_ss_invalid_alg(self):
         self.assertIsNone(
             self.secret_store._map_algorithm_kmip_to_ss('bad_alg'))
+
+    def test_validate_keyfile_permissions_good(self):
+        config = {'return_value.st_mode':
+                  (stat.S_IRUSR | stat.S_IFREG)}
+
+        with mock.patch('os.stat', **config):
+            self.assertIsNone(
+                self.secret_store._validate_keyfile_permissions('/some/path/'))
+
+    def test_check_keyfile_permissions_bad(self):
+        config = {'return_value.st_mode':
+                  (stat.S_IWOTH | stat.S_IFREG)}
+
+        with mock.patch('os.stat', **config):
+            self.assertRaises(
+                kss.KMIPSecretStoreError,
+                self.secret_store._validate_keyfile_permissions,
+                '/some/path/')
+
+    def test_checks_keyfile_permissions(self):
+        config = {'return_value': True}
+        func = ("barbican.plugin.kmip_secret_store."
+                "KMIPSecretStore._validate_keyfile_permissions")
+
+        with mock.patch(func, **config) as m:
+            CONF = cfg.CONF
+            CONF.kmip_plugin.keyfile = '/some/path'
+            kss.KMIPSecretStore(CONF)
+            self.assertEqual(len(m.mock_calls), 1)

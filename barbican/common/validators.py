@@ -154,9 +154,9 @@ class NewSecretValidator(ValidatorBase):
         expiration = self._extract_expiration(json_data, schema_name)
         self._assert_expiration_is_valid(expiration, schema_name)
         json_data['expiration'] = expiration
+        content_type = json_data.get('payload_content_type')
 
         if 'payload' in json_data:
-            content_type = json_data.get('payload_content_type')
             content_encoding = json_data.get('payload_content_encoding')
             self._validate_content_parameters(content_type, content_encoding,
                                               schema_name)
@@ -173,12 +173,16 @@ class NewSecretValidator(ValidatorBase):
                                       "payload_content_type is specified"),
                                   "payload")
 
+            if content_type:
+                self._validate_payload_content_type_is_supported(content_type,
+                                                                 schema_name)
+
         return json_data
 
     def _extract_name(self, json_data):
         """Extracts and returns the name from the JSON data."""
         name = json_data.get('name')
-        if name:
+        if isinstance(name, six.string_types):
             return name.strip()
         return None
 
@@ -225,12 +229,8 @@ class NewSecretValidator(ValidatorBase):
                 "be supplied."),
             "payload_content_type")
 
-        self._assert_validity(
-            content_type.lower() in mime_types.SUPPORTED,
-            schema_name,
-            u._("payload_content_type is not one of {supported}").format(
-                supported=mime_types.SUPPORTED),
-            "payload_content_type")
+        self._validate_payload_content_type_is_supported(content_type,
+                                                         schema_name)
 
         if content_type == 'application/octet-stream':
             self._assert_validity(
@@ -247,6 +247,15 @@ class NewSecretValidator(ValidatorBase):
                 u._("payload_content_encoding must not be specified when "
                     "payload_content_type is text/plain"),
                 "payload_content_encoding")
+
+    def _validate_payload_content_type_is_supported(self, content_type,
+                                                    schema_name):
+        self._assert_validity(
+            content_type.lower() in mime_types.SUPPORTED,
+            schema_name,
+            u._("payload_content_type is not one of {supported}").format(
+                supported=mime_types.SUPPORTED),
+            "payload_content_type")
 
     def _extract_payload(self, json_data):
         """Extracts and returns the payload from the JSON data.
@@ -270,7 +279,8 @@ class TypeOrderValidator(ValidatorBase):
         self.schema = {
             "type": "object",
             "$schema": "http://json-schema.org/draft-03/schema",
-            "properties": {"meta": {"type": "object"},
+            "properties": {"meta": {"type": "object",
+                                    "required": True},
                            "type": {"type": "string",
                                     "required": True,
                                     "enum": ['key', 'asymmetric',
@@ -302,9 +312,6 @@ class TypeOrderValidator(ValidatorBase):
     def _validate_key_meta(self, key_meta, schema_name):
         """Validation specific to meta for key type order."""
 
-        self._assert_validity(key_meta is not None,
-                              schema_name,
-                              u._("'meta' attributes is required"), "meta")
         secret_validator = NewSecretValidator()
         secret_validator.validate(key_meta, parent_schema=self.name)
 
@@ -320,9 +327,6 @@ class TypeOrderValidator(ValidatorBase):
 
     def _validate_asymmetric_meta(self, asymmetric_meta, schema_name):
         """Validation specific to meta for asymmetric type order."""
-        self._assert_validity(asymmetric_meta is not None,
-                              schema_name,
-                              u._("'meta' attributes is required"), "meta")
 
         # Validate secret metadata.
         secret_validator = NewSecretValidator()
@@ -351,9 +355,6 @@ class TypeOrderValidator(ValidatorBase):
 
     def _validate_certificate_meta(self, certificate_meta, schema_name):
         """Validation specific to meta for certificate type order."""
-        self._assert_validity(certificate_meta is not None,
-                              schema_name,
-                              u._("'meta' attributes is required"), "meta")
 
         jump_table = {
             'simple-cmc': self._validate_simple_cmc_request,

@@ -266,8 +266,11 @@ class BaseSecretsResource(FunctionalTest):
             self.transport_key.id)
         self.transport_key_repo = mock.MagicMock()
 
+
+class BaseSecretTestSuite(BaseSecretsResource):
+
     @mock.patch('barbican.plugin.resources.store_secret')
-    def _test_should_add_new_secret_with_expiration(self, mock_store_secret):
+    def test_should_add_new_secret_with_expiration(self, mock_store_secret):
         mock_store_secret.return_value = self.secret, None
 
         expiration = '2114-02-28 12:14:44.180394-05:00'
@@ -300,8 +303,8 @@ class BaseSecretsResource(FunctionalTest):
         )
 
     @mock.patch('barbican.plugin.resources.store_secret')
-    def _test_should_add_new_secret_one_step(self, mock_store_secret,
-                                             check_project_id=True):
+    def test_should_add_new_secret_one_step(self, mock_store_secret,
+                                            check_project_id=True):
         """Test the one-step secret creation.
 
         :param check_project_id: True if the retrieved Project id needs to be
@@ -332,7 +335,7 @@ class BaseSecretsResource(FunctionalTest):
         )
 
     @mock.patch('barbican.plugin.resources.store_secret')
-    def _test_should_add_new_secret_one_step_with_tkey_id(
+    def test_should_add_new_secret_one_step_with_tkey_id(
             self, mock_store_secret, check_project_id=True):
         """Test the one-step secret creation with transport_key_id set
 
@@ -361,18 +364,18 @@ class BaseSecretsResource(FunctionalTest):
             transport_key_id=self.transport_key_id
         )
 
-    def _test_should_add_new_secret_if_project_does_not_exist(self):
+    def test_should_add_new_secret_if_project_does_not_exist(self):
         self.project_repo.get.return_value = None
         self.project_repo.find_by_external_project_id.return_value = None
 
-        self._test_should_add_new_secret_one_step(check_project_id=False)
+        self.test_should_add_new_secret_one_step(check_project_id=False)
 
         args, kwargs = self.project_repo.create_from.call_args
         project = args[0]
         self.assertIsInstance(project, models.Project)
         self.assertEqual(self.external_project_id, project.external_id)
 
-    def _test_should_add_new_secret_metadata_without_payload(self):
+    def test_should_add_new_secret_metadata_without_payload(self):
         self.app.post_json(
             '/secrets/',
             {'name': self.name}
@@ -392,8 +395,7 @@ class BaseSecretsResource(FunctionalTest):
         self.assertFalse(self.datum_repo.create_from.called)
 
     @mock.patch('barbican.plugin.resources.store_secret')
-    def _test_should_add_new_secret_metadata_with_tkey(self,
-                                                       mock_store_secret):
+    def test_should_add_new_secret_metadata_with_tkey(self, mock_store_secret):
 
         mock_store_secret.return_value = self.secret, self.transport_key
         resp = self.app.post_json(
@@ -407,8 +409,8 @@ class BaseSecretsResource(FunctionalTest):
         self.assertEqual(resp.json['transport_key_ref'], self.tkey_url)
 
     @mock.patch('barbican.plugin.resources.store_secret')
-    def _test_should_add_secret_payload_almost_too_large(self,
-                                                         mock_store_secret):
+    def test_should_add_secret_payload_almost_too_large(self,
+                                                        mock_store_secret):
         mock_store_secret.return_value = self.secret, None
 
         if validators.DEFAULT_MAX_SECRET_BYTES % 4:
@@ -432,7 +434,7 @@ class BaseSecretsResource(FunctionalTest):
             self.secret_req['payload_content_encoding'] = payload_encoding
         self.app.post_json('/secrets/', self.secret_req)
 
-    def _test_should_raise_due_to_payload_too_large(self):
+    def test_should_raise_due_to_payload_too_large(self):
         big_text = ''.join(['A' for x
                             in moves.range(
                                 validators.DEFAULT_MAX_SECRET_BYTES + 10)
@@ -456,7 +458,7 @@ class BaseSecretsResource(FunctionalTest):
         )
         self.assertEqual(resp.status_int, 413)
 
-    def _test_should_raise_due_to_empty_payload(self):
+    def test_should_raise_due_to_empty_payload(self):
         self.secret_req = {'name': self.name,
                            'algorithm': self.secret_algorithm,
                            'bit_length': self.secret_bit_length,
@@ -478,34 +480,7 @@ class BaseSecretsResource(FunctionalTest):
         self.assertEqual(resp.status_int, 400)
 
 
-class WhenCreatingPlainTextSecretsUsingSecretsResource(BaseSecretsResource):
-
-    def test_should_add_new_secret_one_step(self):
-        self._test_should_add_new_secret_one_step()
-
-    def test_should_add_new_secret_one_step_with_tkey_id(self):
-        self._test_should_add_new_secret_one_step_with_tkey_id()
-
-    def test_should_add_new_secret_with_expiration(self):
-        self._test_should_add_new_secret_with_expiration()
-
-    def test_should_add_new_secret_if_project_does_not_exist(self):
-        self._test_should_add_new_secret_if_project_does_not_exist()
-
-    def test_should_add_new_secret_metadata_without_payload(self):
-        self._test_should_add_new_secret_metadata_without_payload()
-
-    def test_should_add_new_secret_metadata_with_tkey(self):
-        self._test_should_add_new_secret_metadata_with_tkey()
-
-    def test_should_add_new_secret_payload_almost_too_large(self):
-        self._test_should_add_secret_payload_almost_too_large()
-
-    def test_should_raise_due_to_payload_too_large(self):
-        self._test_should_raise_due_to_payload_too_large()
-
-    def test_should_raise_due_to_empty_payload(self):
-        self._test_should_raise_due_to_empty_payload()
+class WhenCreatingPlainTextSecretsUsingSecretsResource(BaseSecretTestSuite):
 
     def test_should_raise_due_to_unsupported_payload_content_type(self):
         self.secret_req = {'name': self.name,
@@ -522,91 +497,8 @@ class WhenCreatingPlainTextSecretsUsingSecretsResource(BaseSecretsResource):
         )
         self.assertEqual(resp.status_int, 400)
 
-# TODO(jwood) These tests are integration-style unit tests of the REST -> Pecan
-#   resources, which are more painful to test now that we have a two-tier
-#   plugin lookup framework. These tests should instead be re-located to
-#   unit tests of the secret_store.py and store_crypto.py modules. A separate
-#   CR will add the additional unit tests.
-#     def test_create_secret_content_type_text_plain(self):
-#         # payload_content_type has trailing space
-#         self.secret_req = {'name': self.name,
-#                            'payload_content_type': 'text/plain ',
-#                            'algorithm': self.secret_algorithm,
-#                            'bit_length': self.secret_bit_length,
-#                            'mode': self.secret_mode,
-#                            'payload': self.payload}
-#
-#         resp = self.app.post_json(
-#             '/secrets/',
-#             self.secret_req
-#         )
-#         self.assertEqual(resp.status_int, 201)
-#
-#         self.secret_req = {'name': self.name,
-#                            'payload_content_type': '  text/plain',
-#                            'algorithm': self.secret_algorithm,
-#                            'bit_length': self.secret_bit_length,
-#                            'mode': self.secret_mode,
-#                            'payload': self.payload}
-#
-#         resp = self.app.post_json(
-#             '/secrets/',
-#             self.secret_req
-#         )
-#         self.assertEqual(resp.status_int, 201)
-#
-#     def test_create_secret_content_type_text_plain_space_charset_utf8(self):
-#         # payload_content_type has trailing space
-#         self.secret_req = {'name': self.name,
-#                            'payload_content_type':
-#                            'text/plain; charset=utf-8 ',
-#                            'algorithm': self.secret_algorithm,
-#                            'bit_length': self.secret_bit_length,
-#                            'mode': self.secret_mode,
-#                            'payload': self.payload}
-#
-#         resp = self.app.post_json(
-#             '/secrets/',
-#             self.secret_req
-#         )
-#         self.assertEqual(resp.status_int, 201)
-#
-#         self.secret_req = {'name': self.name,
-#                            'payload_content_type':
-#                            '  text/plain; charset=utf-8',
-#                            'algorithm': self.secret_algorithm,
-#                            'bit_length': self.secret_bit_length,
-#                            'mode': self.secret_mode,
-#                            'payload': self.payload}
-#
-#         resp = self.app.post_json(
-#             '/secrets/',
-#             self.secret_req
-#         )
-#         self.assertEqual(resp.status_int, 201)
-#
-#     def test_create_secret_with_only_content_type(self):
-#         # No payload just content_type
-#         self.secret_req = {'payload_content_type':
-#                            'text/plain'}
-#         resp = self.app.post_json(
-#             '/secrets/',
-#             self.secret_req,
-#             expect_errors=True
-#         )
-#         self.assertEqual(resp.status_int, 400)
-#
-#         self.secret_req = {'payload_content_type':
-#                            'text/plain',
-#                            'payload': 'somejunk'}
-#         resp = self.app.post_json(
-#             '/secrets/',
-#             self.secret_req
-#         )
-#         self.assertEqual(resp.status_int, 201)
 
-
-class WhenCreatingBinarySecretsUsingSecretsResource(BaseSecretsResource):
+class WhenCreatingBinarySecretsUsingSecretsResource(BaseSecretTestSuite):
 
     @property
     def root(self):
@@ -614,33 +506,6 @@ class WhenCreatingBinarySecretsUsingSecretsResource(BaseSecretsResource):
                    payload_content_type='application/octet-stream',
                    payload_content_encoding='base64')
         return super(WhenCreatingBinarySecretsUsingSecretsResource, self).root
-
-    def test_should_add_new_secret_one_step(self):
-        self._test_should_add_new_secret_one_step()
-
-    def test_should_add_new_secret_one_step_with_tkey_id(self):
-        self._test_should_add_new_secret_one_step_with_tkey_id()
-
-    def test_should_add_new_secret_with_expiration(self):
-        self._test_should_add_new_secret_with_expiration()
-
-    def test_should_add_new_secret_if_project_does_not_exist(self):
-        self._test_should_add_new_secret_if_project_does_not_exist()
-
-    def test_should_add_new_secret_metadata_without_payload(self):
-        self._test_should_add_new_secret_metadata_without_payload()
-
-    def test_should_add_new_secret_metadata_with_tkey(self):
-        self._test_should_add_new_secret_metadata_with_tkey()
-
-    def test_should_add_new_secret_payload_almost_too_large(self):
-        self._test_should_add_secret_payload_almost_too_large()
-
-    def test_should_raise_due_to_payload_too_large(self):
-        self._test_should_raise_due_to_payload_too_large()
-
-    def test_should_raise_due_to_empty_payload(self):
-        self._test_should_raise_due_to_empty_payload()
 
     def test_create_secret_fails_with_binary_payload_no_encoding(self):
         self.secret_req = {
@@ -1516,8 +1381,7 @@ class WhenCreatingOrdersUsingOrdersResource(FunctionalTest):
                      "algorithm": "AES",
                      "bit_length": 256,
                      "mode": "cbc",
-                     'payload_content_type':
-                     'application/octet-stream'}
+                     'payload_content_type': 'application/octet-stream'}
 
         self.key_order_req = {'type': self.type,
                               'meta': self.meta}
@@ -1535,6 +1399,17 @@ class WhenCreatingOrdersUsingOrdersResource(FunctionalTest):
         args, kwargs = self.order_repo.create_from.call_args
         order = args[0]
         self.assertIsInstance(order, models.Order)
+
+    def test_should_fail_creating_order_with_bogus_content(self):
+        resp = self.app.post(
+            '/orders/',
+            'bogus',
+            headers={
+                'Content-Type': 'application/json'
+            },
+            expect_errors=True
+        )
+        self.assertEqual(resp.status_int, 400)
 
     def test_should_allow_add_new_order_unsupported_algorithm(self):
         # TODO(john-wood-w) Allow until plugin validation is added.
@@ -1558,10 +1433,26 @@ class WhenCreatingOrdersUsingOrdersResource(FunctionalTest):
 
         self.assertEqual(resp.status_int, 202)
 
-    def test_should_raise_add_new_order_no_secret(self):
+    def test_should_raise_add_new_order_no_secret_info(self):
         resp = self.app.post_json(
             '/orders/',
             {},
+            expect_errors=True
+        )
+        self.assertEqual(resp.status_int, 400)
+
+    def test_should_raise_add_new_order_no_type(self):
+        resp = self.app.post_json(
+            '/orders/',
+            {'meta': self.meta},
+            expect_errors=True
+        )
+        self.assertEqual(resp.status_int, 400)
+
+    def test_should_raise_add_new_order_no_meta(self):
+        resp = self.app.post_json(
+            '/orders/',
+            {'type': self.type},
             expect_errors=True
         )
         self.assertEqual(resp.status_int, 400)
@@ -1582,6 +1473,15 @@ class WhenCreatingOrdersUsingOrdersResource(FunctionalTest):
             expect_errors=True,
         )
         self.assertEqual(resp.status_int, 415)
+
+    def test_should_raise_add_new_order_with_unsupported_content_type(self):
+        self.meta["payload_content_type"] = 'unsupported type'
+        resp = self.app.post_json(
+            '/orders/',
+            self.key_order_req,
+            expect_errors=True,
+        )
+        self.assertEqual(resp.status_int, 400)
 
 
 class WhenGettingOrdersListUsingOrdersResource(FunctionalTest):
@@ -1825,6 +1725,17 @@ class WhenPuttingOrderWithMetadataUsingOrderResource(FunctionalTest):
             entity_id=self.order.id,
             external_project_id=self.external_project_id,
             suppress_exception=True)
+
+    def test_should_fail_with_bogus_content(self):
+        resp = self.app.put(
+            '/orders/{0}/'.format(self.order.id),
+            'bogus',
+            headers={
+                'Content-Type': 'application/json'
+            },
+            expect_errors=True
+        )
+        self.assertEqual(resp.status_int, 400)
 
     def test_should_fail_bad_type(self):
         self.order['type'] = 'secret'

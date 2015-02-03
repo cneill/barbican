@@ -58,11 +58,15 @@ class BaseModel(object):
         have been removed.
         """
 
+        # NOTE(jaosorior): deleting a key from the incoming dictionary actually
+        # affects the model object. So we do a copy to avoid this.
+        resulting_dict = dictionary.copy()
+
         # Dumping the keys to a list as we'll be changing the dict size
         empty_keys = [k for k, v in dictionary.iteritems() if v is None]
         for k in empty_keys:
-            del dictionary[k]
-        return dictionary
+            del resulting_dict[k]
+        return resulting_dict
 
     @classmethod
     def json_to_obj(cls, serialized_str):
@@ -75,7 +79,8 @@ class BaseModel(object):
             json_dict = json.loads(serialized_str)
             return cls.dict_to_obj(json_dict)
         except TypeError as e:
-            LOG.error('Couldn\'t deserialize input: %s', e)
+            LOG.error('Couldn\'t deserialize input: %s\n Because: %s',
+                      serialized_str, e)
 
     @classmethod
     def dict_to_obj(cls, input_dict):

@@ -18,9 +18,17 @@ import os
 import requests
 from requests import auth
 from tempest.common.utils import misc as misc_utils
+from tempest import config
 from tempest.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
+
+CONF = config.CONF
+
+# Use local tempest conf if one is available.
+# This usually means we're running tests outside of devstack.
+if os.path.exists('./etc/dev_tempest.conf'):
+    CONF.set_config_path('./etc/dev_tempest.conf')
 
 
 class BarbicanClientAuth(auth.AuthBase):
@@ -31,9 +39,23 @@ class BarbicanClientAuth(auth.AuthBase):
 
         self.username = credentials.username
         self.password = credentials.password
-        self.project_id = credentials.project_id
-        self.project_name = credentials.project_name
-        self.token = auth_provider.get_token()
+
+        if 'v3' in CONF.identity.auth_version:
+            self.project_name = credentials.project_name
+            self.project_id = credentials.project_id
+        else:
+            self.tenant_name = credentials.tenant_name
+            self.project_id = credentials.tenant_id
+
+        try:
+            self.token = auth_provider.get_token()
+        except ValueError:
+            # hockeynut - some auth providers will allow the v3 expiration
+            # date format which includes milliseconds.  This change will retry
+            # the call to get the auth token with the milliseconds included in
+            # the date format string.
+            auth_provider.EXPIRY_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
+            self.token = auth_provider.get_token()
 
     def __call__(self, r):
         r.headers['X-Project-Id'] = self.project_id
@@ -51,6 +73,21 @@ class BarbicanClient(object):
         self.default_headers = {
             'Content-Type': 'application/json'
         }
+        self.region = CONF.identity.region
+
+    def _attempt_to_stringify_content(self, content, content_tag):
+        if content is None:
+            return content
+        try:
+            # NOTE(jaosorior): The content is decoded as ascii since the
+            # logging module has problems with utf-8 strings and will end up
+            # trying to decode this as ascii.
+            return content.decode('ascii')
+        except UnicodeDecodeError:
+            # NOTE(jaosorior): Since we are using base64 as default and this is
+            # only for logging (in order to debug); Lets not put too much
+            # effort in this and just use encoded string.
+            return content.encode('base64')
 
     def stringify_request(self, request_kwargs, response):
         format_kwargs = {
@@ -58,9 +95,14 @@ class BarbicanClient(object):
             'method': request_kwargs.get('method'),
             'url': request_kwargs.get('url'),
             'headers': response.request.headers,
-            'body': request_kwargs.get('data'),
-            'response_body': response.content
         }
+
+        format_kwargs['body'] = self._attempt_to_stringify_content(
+            request_kwargs.get('data'), 'body')
+
+        format_kwargs['response_body'] = self._attempt_to_stringify_content(
+            response.content, 'response_body')
+
         return ('{code} {method} {url}\n'
                 'Request Headers: {headers}\n'
                 'Request Body: {body}\n'
@@ -71,9 +113,14 @@ class BarbicanClient(object):
         str_request = self.stringify_request(request_kwargs, response)
         LOG.info('Request (%s)\n %s', test_name, str_request)
 
+    def _status_is_2xx_success(self, status_code):
+        return status_code >= 200 and status_code < 300
+
     def attempt_to_deserialize(self, response, model_type):
-        if model_type and hasattr(model_type, 'json_to_obj'):
+        if (self._status_is_2xx_success(response.status_code) and
+                model_type and hasattr(model_type, 'json_to_obj')):
             return model_type.json_to_obj(response.content)
+        return None
 
     def attempt_to_serialize(self, model):
         if model and hasattr(model, 'obj_to_json'):
@@ -82,6 +129,7 @@ class BarbicanClient(object):
     def get_base_url(self, include_version=True):
         filters = {
             'service': 'key-manager',
+            'region': self.region,
             'api_version': self.api_version if include_version else ''
         }
 
