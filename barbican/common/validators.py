@@ -16,7 +16,7 @@ API JSON validators.
 import abc
 
 import jsonschema as schema
-from oslo.config import cfg
+from oslo_config import cfg
 import six
 
 from barbican.common import exception
@@ -279,13 +279,18 @@ class TypeOrderValidator(ValidatorBase):
         self.schema = {
             "type": "object",
             "$schema": "http://json-schema.org/draft-03/schema",
-            "properties": {"meta": {"type": "object",
-                                    "required": True},
-                           "type": {"type": "string",
-                                    "required": True,
-                                    "enum": ['key', 'asymmetric',
-                                             'certificate']}
-                           }}
+            "properties": {
+                "meta": {
+                    "type": "object",
+                    "required": True
+                },
+                "type": {
+                    "type": "string",
+                    "required": True,
+                    "enum": ['key', 'asymmetric', 'certificate']
+                }
+            }
+        }
 
     def validate(self, json_data, parent_schema=None):
         schema_name = self._full_name(parent_schema)
