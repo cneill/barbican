@@ -69,6 +69,8 @@ secret_create_two_phase_data = {
     "mode": "cbc",
 }
 
+bogus_project_id = 'abcd123'
+
 
 @utils.parameterized_test_case
 class SecretsTestCase(base.TestCase):
@@ -141,20 +143,6 @@ class SecretsTestCase(base.TestCase):
                                 use_auth=False, extra_headers=headers)
 
         self.assertEqual(resp.status_code, 201)
-
-    @testcase.attr('security')
-    def test_huge_bogus_token(self):
-        """Create a secret with a bogus 3500-character token
-
-        Should return 413"""
-
-        model = secret_models.SecretModel(**secret_create_defaults_data)
-        headers = {'X-Auth-Token': 'a' * 3500}
-
-        resp = self.client.post('secrets', request_model=model,
-                                use_auth=False, extra_headers=headers)
-
-        self.assertEqual(resp.status_code, 401)
 
     '''
     @testcase.attr('security')
@@ -273,11 +261,26 @@ class SecretsTestCase(base.TestCase):
         self.assertEqual(resp.status_code, 400)
 
     # UNAUTHED TESTS #
+
     @testcase.attr('security')
-    def test_unauthed_create(self):
+    def test_unauthed_huge_bogus_token_no_proj_id(self):
+        """Create a secret with a bogus 3500-character token
+
+        Should return 400"""
+
+        model = secret_models.SecretModel(**secret_create_defaults_data)
+        headers = {'X-Auth-Token': 'a' * 3500}
+
+        resp = self.client.post('secrets', request_model=model,
+                                use_auth=False, extra_headers=headers)
+
+        self.assertEqual(resp.status_code, 401)
+
+    @testcase.attr('security')
+    def test_unauthed_create_no_proj_id(self):
         """Create a secret without a token or Project-Id
 
-        Should return 401"""
+        Should return 400"""
         test_model = secret_models.SecretModel(**secret_create_defaults_data)
 
         resp = self.client.post('secrets', request_model=test_model,
@@ -286,10 +289,10 @@ class SecretsTestCase(base.TestCase):
         self.assertEqual(resp.status_code, 401)
 
     @testcase.attr('security')
-    def test_unauthed_get(self):
+    def test_unauthed_get_no_proj_id(self):
         """Attempt to read a secret without a token or Project-Id
 
-        Should return 401"""
+        Should return 400"""
         # test_model = secret_models.SecretModel(**secret_create_defaults_data)
         secret_ref = 'http://localhost:9311/v1/secrets/'
         secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
@@ -303,10 +306,10 @@ class SecretsTestCase(base.TestCase):
         self.assertEqual(resp.status_code, 401)
 
     @testcase.attr('security')
-    def test_unauthed_update(self):
+    def test_unauthed_update_no_proj_id(self):
         """Attempt to update a secret without a token or Project-Id
 
-        Should return 401"""
+        Should return 400"""
         secret_ref = 'http://localhost:9311/v1/secrets/'
         secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
         headers = {'Content-Type': 'text/plain',
@@ -318,13 +321,88 @@ class SecretsTestCase(base.TestCase):
         self.assertEqual(resp.status_code, 401)
 
     @testcase.attr('security')
-    def test_unauthed_delete(self):
+    def test_unauthed_delete_no_proj_id(self):
         """Attempt to delete a secret without a token or Project-Id
+
+        Should return 400"""
+        secret_ref = 'http://localhost:9311/v1/secrets/'
+        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
+
+        resp = self.client.delete(secret_ref, use_auth=False)
+
+        self.assertEqual(resp.status_code, 401)
+
+    @testcase.attr('security')
+    def test_unauthed_huge_bogus_token_w_proj_id(self):
+        """Create a secret with a bogus 3500-character token
+
+        Should return 401"""
+
+        model = secret_models.SecretModel(**secret_create_defaults_data)
+        headers = {'X-Auth-Token': 'a' * 3500,
+                   'X-Project-Id': bogus_project_id}
+
+        resp = self.client.post('secrets', request_model=model,
+                                use_auth=False, extra_headers=headers)
+
+        self.assertEqual(resp.status_code, 401)
+
+    @testcase.attr('security')
+    def test_unauthed_create_w_proj_id(self):
+        """Create a secret without a token
+
+        Should return 401"""
+        test_model = secret_models.SecretModel(**secret_create_defaults_data)
+        headers = {'X-Project-Id': bogus_project_id}
+
+        resp = self.client.post('secrets', request_model=test_model,
+                                use_auth=False, extra_headers=headers)
+
+        self.assertEqual(resp.status_code, 401)
+
+    @testcase.attr('security')
+    def test_unauthed_get_w_proj_id(self):
+        """Attempt to read a secret without a token or Project-Id
 
         Should return 401"""
         secret_ref = 'http://localhost:9311/v1/secrets/'
         secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
 
-        resp = self.client.delete(secret_ref, use_auth=False)
+        headers = {'Accept': '*/*',
+                   'Accept-Encoding': '*/*',
+                   'X-Project-Id': bogus_project_id}
+
+        resp = self.client.get(secret_ref, extra_headers=headers,
+                               use_auth=False)
+
+        self.assertEqual(resp.status_code, 401)
+
+    @testcase.attr('security')
+    def test_unauthed_update_w_proj_id(self):
+        """Attempt to update a secret without a token or Project-Id
+
+        Should return 401"""
+        secret_ref = 'http://localhost:9311/v1/secrets/'
+        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
+        headers = {'Content-Type': 'text/plain',
+                   'Content-Encoding': 'base64',
+                   'X-Project-Id': bogus_project_id}
+
+        resp = self.client.put(secret_ref, data=None, extra_headers=headers,
+                               use_auth=False)
+
+        self.assertEqual(resp.status_code, 401)
+
+    @testcase.attr('security')
+    def test_unauthed_delete_w_proj_id(self):
+        """Attempt to delete a secret without a token or Project-Id
+
+        Should return 401"""
+        secret_ref = 'http://localhost:9311/v1/secrets/'
+        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
+        headers = {'X-Project-Id': bogus_project_id}
+
+        resp = self.client.delete(secret_ref, use_auth=False,
+                                  extra_headers=headers)
 
         self.assertEqual(resp.status_code, 401)
