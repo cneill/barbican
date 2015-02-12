@@ -146,18 +146,6 @@ class SecretsTestCase(base.TestCase):
 
     '''
     @testcase.attr('security')
-    def test_huge_xss_encoding(self):
-        """Create a secret with XSS encoding, larger than the max field size
-
-        Should return 413"""
-        test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        overrides = {'payload_content_encoding':
-                     '\\x27\u0027\'"><script>alert(1)</script>' * 100000}
-        test_model.override_values(**overrides)
-        resp, secret_ref = self.behaviors.create_secret(test_model)
-        self.assertEqual(resp.status_code, 413)
-
-    @testcase.attr('security')
     def test_huger_encoding(self):
         """Create a secret with XSS encoding, larger than the max field size
 
@@ -171,6 +159,7 @@ class SecretsTestCase(base.TestCase):
     '''
 
     # CONTENT TYPES #
+
     @testcase.attr('security')
     def test_atom_content_type(self):
         """Create a secret, with atom+xml as content type
@@ -182,83 +171,26 @@ class SecretsTestCase(base.TestCase):
         self.assertEqual(resp.status_code, 415)
 
     # BAD CONTENT #
-    @testcase.attr('security')
-    def test_xss_secret(self):
-        """Create a secret with XSS
 
-        Should return 400"""
-        test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        overrides = {'payload': '<script>alert(1)</script>',
-                     "payload_content_type": "text/plain"}
+    @utils.parameterized_dataset(
+        {'xss': ['<script>alert(1)</script>'],
+         'sqli': ['\'" union all select * from users/*--'],
+         'unicode': [unichr(255) + unichr(0)],
+         'b64_xss': ['PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=='],
+         'b64_sqli': ['JyIgdW5pb24gYWxsIHNlbGVjdCAqIGZyb20gdXNlcnMvKi0t'],
+         'b64_unicode': ['/w==']})
+    @testcase.attr('negative')
+    def test_evil_payload(self, payload):
+        """Creates a secret with various evil payloads
 
-        test_model.override_values(**overrides)
-        resp, secret_ref = self.behaviors.create_secret(test_model)
-        self.assertEqual(resp.status_code, 400)
+        Should return 201"""
+        model = secret_models.SecretModel(**secret_create_defaults_data)
 
-    @testcase.attr('security')
-    def test_sqli_secret(self):
-        """Create a secret with SQLi
+        overrides = {'payload': payload}
+        model.override_values(**overrides)
 
-        Should return 400"""
-        test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        overrides = {'payload': '\'" union all select * from users/*--',
-                     "payload_content_type": "text/plain"}
-
-        test_model.override_values(**overrides)
-        resp, secret_ref = self.behaviors.create_secret(test_model)
-        self.assertEqual(resp.status_code, 400)
-
-    @testcase.attr('security')
-    def test_utf8_secret(self):
-        """Create a secret with unicode
-
-        Should return 400"""
-        test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        overrides = {'payload': unichr(255) + unichr(0),
-                     "payload_content_type": "text/plain"}
-
-        test_model.override_values(**overrides)
-        resp, secret_ref = self.behaviors.create_secret(test_model)
-        self.assertEqual(resp.status_code, 400)
-
-    @testcase.attr('security')
-    def test_b64_xss_secret(self):
-        """Create a secret with XSS
-
-        Should return 400"""
-        test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        overrides = {'payload': 'PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
-                     "payload_content_type": "text/plain"}
-
-        test_model.override_values(**overrides)
-        resp, secret_ref = self.behaviors.create_secret(test_model)
-        self.assertEqual(resp.status_code, 400)
-
-    @testcase.attr('security')
-    def test_b64_sqli_secret(self):
-        """Create a secret with SQLi
-
-        Should return 400"""
-        test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        overrides = {'payload': 'JyIgdW5pb24gYWxsIHNlbGVjdCAqIGZyb20gdXNlcnMvKi0t',
-                     "payload_content_type": "text/plain"}
-
-        test_model.override_values(**overrides)
-        resp, secret_ref = self.behaviors.create_secret(test_model)
-        self.assertEqual(resp.status_code, 400)
-
-    @testcase.attr('security')
-    def test_b64_utf8_secret(self):
-        """Create a secret with UTF8
-
-        Should return 400"""
-        test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        overrides = {'payload': '/w==',
-                     "payload_content_type": "text/plain"}
-
-        test_model.override_values(**overrides)
-        resp, secret_ref = self.behaviors.create_secret(test_model)
-        self.assertEqual(resp.status_code, 400)
+        resp, secret_ref = self.behaviors.create_secret(model)
+        self.assertEqual(resp.status_code, 201)
 
     # UNAUTHED TESTS #
 
