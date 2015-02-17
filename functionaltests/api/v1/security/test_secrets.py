@@ -229,7 +229,7 @@ class SecretsTestCase(base.TestCase):
     def test_unauthed_huge_bogus_token_no_proj_id(self):
         """Create a secret with a bogus 3500-character token
 
-        Should return 400"""
+        Should return 401"""
 
         model = secret_models.SecretModel(**secret_create_defaults_data)
         headers = {'X-Auth-Token': 'a' * 3500}
@@ -243,7 +243,7 @@ class SecretsTestCase(base.TestCase):
     def test_unauthed_create_no_proj_id(self):
         """Create a secret without a token or Project-Id
 
-        Should return 400"""
+        Should return 401"""
         test_model = secret_models.SecretModel(**secret_create_defaults_data)
 
         resp = self.client.post('secrets', request_model=test_model,
@@ -255,7 +255,7 @@ class SecretsTestCase(base.TestCase):
     def test_unauthed_get_no_proj_id(self):
         """Attempt to read a secret without a token or Project-Id
 
-        Should return 400"""
+        Should return 401"""
         headers = {'Accept': '*/*',
                    'Accept-Encoding': '*/*'}
 
@@ -268,7 +268,7 @@ class SecretsTestCase(base.TestCase):
     def test_unauthed_update_no_proj_id(self):
         """Attempt to update a secret without a token or Project-Id
 
-        Should return 400"""
+        Should return 401"""
         headers = {'Content-Type': 'text/plain',
                    'Content-Encoding': 'base64'}
 
@@ -281,7 +281,7 @@ class SecretsTestCase(base.TestCase):
     def test_unauthed_delete_no_proj_id(self):
         """Attempt to delete a secret without a token or Project-Id
 
-        Should return 400"""
+        Should return 401"""
 
         resp = self.client.delete(bogus_secret_ref, use_auth=False)
 
