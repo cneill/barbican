@@ -14,10 +14,14 @@
 # limitations under the License.
 from testtools import testcase
 
+from tempest import clients as tempest_clients
+
 from barbican.tests import utils
 from functionaltests.api import base
 from functionaltests.api.v1.behaviors import secret_behaviors
 from functionaltests.api.v1.models import secret_models
+from functionaltests.api.v1.security import security_utils
+from functionaltests.common import client
 
 # TODO(tdink) Move to a config file
 secret_create_defaults_data = {
@@ -71,6 +75,14 @@ class SecretsTestCase(base.TestCase):
     def setUp(self):
         super(SecretsTestCase, self).setUp()
         self.behaviors = secret_behaviors.SecretBehaviors(self.client)
+
+        # set up a second client
+        credentials = security_utils.SecondCreds()
+        mgr = tempest_clients.Manager(credentials=credentials)
+        auth_provider = mgr.get_auth_provider(credentials)
+        self.client2 = client.BarbicanClient(auth_provider)
+        self.behaviors2 = secret_behaviors.SecretBehaviors(self.client2)
+
 
     def tearDown(self):
         self.behaviors.delete_all_created_secrets()
@@ -353,4 +365,24 @@ class SecretsTestCase(base.TestCase):
         resp = self.client.delete(bogus_secret_ref, use_auth=False,
                                   extra_headers=headers)
 
+        self.assertEqual(resp.status_code, 401)
+
+    # LOGIC #
+
+    @testcase.attr('security')
+    def test_cross_user_read(self):
+        """Attempt to create a secret with one user, and read it with another.
+
+        Should return 401"""
+
+        resp = self.behaviors.create_secret()
+
+        model = secret_models.SecretModel(**secret_create_defaults_data)
+        overrides = {'name': 'This is a super secret secret'}
+        model.override_values(**overrides)
+        resp, secret_ref = self.behaviors.create_secret(model)
+        self.assertEqual(resp.status_code, 201)
+
+        resp = self.behaviors2.get_secret(
+            secret_ref, 'application/octet-stream')
         self.assertEqual(resp.status_code, 401)
