@@ -373,6 +373,7 @@ class SecretsTestCase(base.TestCase):
     def test_cross_user_read(self):
         """Attempt to create a secret with one user, and read it with another.
 
+        RETURNS 200 - CAN SHARE ACROSS USERS
         Should return 401"""
 
         model = secret_models.SecretModel(**secret_create_defaults_data)
@@ -383,4 +384,25 @@ class SecretsTestCase(base.TestCase):
 
         resp = self.behaviors2.get_secret(
             secret_ref, 'application/octet-stream')
+        self.assertEqual(resp.status_code, 401)
+
+    @testcase.attr('security')
+    def test_cross_user_read_bogus_project_id(self):
+        """Attempt to create a secret with one user, and read it with another,
+        including a bogus project ID
+
+        RETURNS 200 - PROJECT ID NOT REQUIRED
+        Should return 401"""
+
+        model = secret_models.SecretModel(**secret_create_defaults_data)
+        overrides = {'name': 'This is a super secret secret'}
+        model.override_values(**overrides)
+        resp, secret_ref = self.behaviors.create_secret(model)
+        self.assertEqual(resp.status_code, 201)
+
+        headers = {'X-Project-Id': bogus_project_id,
+                   'X-Auth-Token': self.client2._auth.token,
+                   'Accept': 'application/octet-stream'}
+        resp = self.client2.get(
+            secret_ref, use_auth=False, extra_headers=headers)
         self.assertEqual(resp.status_code, 401)
