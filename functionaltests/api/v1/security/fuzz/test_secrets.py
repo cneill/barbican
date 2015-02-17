@@ -85,6 +85,25 @@ secret_create_all_the_things = {
     'created': ''
 }
 
+fuzz_header_dataset = \
+    {
+        'accept': {'header': 'Accept',
+                   'payloads': security_utils.get_fuzz_strings('ascii')},
+        'cookie': {'header': 'Cookie',
+                   'payloads': security_utils.get_fuzz_strings('ascii')},
+        'host': {'header': 'Host',
+                 'payloads': security_utils.get_fuzz_strings('ascii')},
+        'content_type': {'header': 'Content-Type',
+                         'payloads': security_utils.get_fuzz_strings('ascii')},
+        'accept_enc': {'header': 'Accept-Encoding',
+                       'payloads': security_utils.get_fuzz_strings('ascii')},
+        'user_agent': {'header': 'User-Agent',
+                       'payloads': security_utils.get_fuzz_strings('ascii')},
+        'connection': {'header': 'Connection',
+                       'payloads': security_utils.get_fuzz_strings('ascii')},
+
+    }
+
 
 @utils.parameterized_test_case
 class SecretsTestCase(base.TestCase):
@@ -244,6 +263,7 @@ class SecretsTestCase(base.TestCase):
                 self.assertEqual(resp.status_code, 406)
     '''
 
+    """
     @utils.parameterized_dataset({
         'accept': {'header': 'Accept',
                    'payloads': security_utils.get_fuzz_strings('ascii')},
@@ -261,9 +281,12 @@ class SecretsTestCase(base.TestCase):
                        'payloads': security_utils.get_fuzz_strings('ascii')},
 
     })
+    """
+    '''
+    @utils.parameterized_dataset(fuzz_header_dataset)
     @testcase.attr('negative')
     def test_fuzz_authed_header(self, **kwargs):
-        """Fuzzes all headers w/ random bytes
+        """Fuzzes all headers w/ random bytes, with a token
 
         Should return [201, 406, 415]"""
         model = secret_models.SecretModel(**secret_create_defaults_data)
@@ -283,3 +306,19 @@ class SecretsTestCase(base.TestCase):
                     self.assertEqual(resp.status_code, 406)
                 else:
                     self.assertIn(resp.status_code, [201, 406, 415])
+    '''
+    @utils.parameterized_dataset(fuzz_header_dataset)
+    @testcase.attr('negative')
+    def test_fuzz_unauthed_header(self, **kwargs):
+        """Fuzzes all headers w/ random bytes, without a token
+
+        Should return 401"""
+        model = secret_models.SecretModel(**secret_create_defaults_data)
+
+        for payload in kwargs['payloads']:
+            if payload.strip():
+                headers = {kwargs['header']: payload}
+
+                resp = self.client.post('secrets', request_model=model,
+                                        extra_headers=headers, use_auth=False)
+                self.assertEqual(resp.status_code, 401)
