@@ -14,9 +14,10 @@
 # limitations under the License.
 import os
 
-from functionaltests.common import client
+from tempest import auth
+from tempest import config
 
-# CONF = config.CONF
+CONF = config.CONF
 
 
 def generate_test_cases(data, headers=None, parameters=None):
@@ -121,3 +122,16 @@ def fuzz_model(model_type, skeleton={}, fuzz_string_type='all',
                     fuzzed_models.append(model)
 
     return fuzzed_models
+
+
+class SecondCreds(auth.KeystoneV3Credentials):
+
+    def __init__(self):
+        credentials = dict(
+            username='barbican',
+            password='barbican',
+            project_name=CONF.identity.admin_tenant_name,
+            domain_name=CONF.identity.admin_domain_name,
+        )
+
+        super(SecondCreds, self).__init__(**credentials)
