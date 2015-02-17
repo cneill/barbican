@@ -128,8 +128,8 @@ class SecondCreds(auth.KeystoneV3Credentials):
 
     def __init__(self):
         credentials = dict(
-            username='barbican',
-            password='barbican',
+            username=CONF.identity.admin_username + '2',
+            password=CONF.identity.admin_password,
             project_name=CONF.identity.admin_tenant_name,
             domain_name=CONF.identity.admin_domain_name,
         )
