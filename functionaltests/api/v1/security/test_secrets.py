@@ -375,8 +375,6 @@ class SecretsTestCase(base.TestCase):
 
         Should return 401"""
 
-        resp = self.behaviors.create_secret()
-
         model = secret_models.SecretModel(**secret_create_defaults_data)
         overrides = {'name': 'This is a super secret secret'}
         model.override_values(**overrides)
