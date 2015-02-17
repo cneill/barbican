@@ -12,20 +12,12 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import base64
-import binascii
-import json
-import sys
-import time
-
 from testtools import testcase
 
 from barbican.tests import utils
 from functionaltests.api import base
 from functionaltests.api.v1.behaviors import secret_behaviors
 from functionaltests.api.v1.models import secret_models
-from functionaltests.api.v1.security import security_utils
 
 # TODO(tdink) Move to a config file
 secret_create_defaults_data = {
@@ -70,6 +62,7 @@ secret_create_two_phase_data = {
 }
 
 bogus_project_id = 'abcd123'
+bogus_secret_ref = 'secrets/91ff8f86-677c-428c-bda6-1b61db872add'
 
 
 @utils.parameterized_test_case
@@ -159,14 +152,32 @@ class SecretsTestCase(base.TestCase):
     '''
 
     # CONTENT TYPES #
-
+    @utils.parameterized_dataset(
+        {'atom_xml': ['application/atom+xml'],
+         'app_xml': ['application/xml'],
+         'txt_xml': ['text/xml'],
+         'app_soap_xml': ['application/soap+xml'],
+         'app_rdf_xml': ['application/rdf+xml'],
+         'app_rss_xml': ['application/rss+xml'],
+         'app_js': ['application/javascript'],
+         'app_ecma': ['application/ecmascript'],
+         'app_x_js': ['application/x-javascript'],
+         'txt_js': ['text/javascript'],
+         'multipart_enc': ['multipart/encrypted'],
+         'multipart_form': ['multipart/form-data'],
+         'app_form': ['application/x-www-form-urlencoded'],
+         'app_pkcs12': ['application/x-pkcs12'],
+         'msg_http': ['message/http'],
+         'msg_partial': ['message/partial'],
+         'example': ['example']
+         })
     @testcase.attr('security')
-    def test_atom_content_type(self):
-        """Create a secret, with atom+xml as content type
+    def test_content_type(self, payload):
+        """Create a secret with different content types
 
         Should return 415"""
         test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        headers = {'Content-Type': 'application/atom+xml'}
+        headers = {'Content-Type': payload}
         resp, secret_ref = self.behaviors.create_secret(test_model, headers)
         self.assertEqual(resp.status_code, 415)
 
@@ -191,6 +202,26 @@ class SecretsTestCase(base.TestCase):
 
         resp, secret_ref = self.behaviors.create_secret(model)
         self.assertEqual(resp.status_code, 201)
+
+    @utils.parameterized_dataset(
+        {'nullbyte': [chr(0)],
+         'date_w_null': ['2018-02-28T19:14:44.180394' + chr(0)],
+         'date_w_unicode': ['2018-02-28T19:14:44.180394' + unichr(255)],
+         'date_w_format': ['2018-02-28T19:%f14:44.180394'],
+         'huge': ['2018-02-28T12:12:12.' + ('4' * 100000)],
+         })
+    @testcase.attr('negative')
+    def test_evil_expiration(self, payload):
+        """Creates a secret with various evil expirations
+
+        Should return 400"""
+        model = secret_models.SecretModel(**secret_create_defaults_data)
+
+        overrides = {'expiration': payload}
+        model.override_values(**overrides)
+
+        resp, secret_ref = self.behaviors.create_secret(model)
+        self.assertEqual(resp.status_code, 400)
 
     # UNAUTHED TESTS #
 
@@ -225,14 +256,10 @@ class SecretsTestCase(base.TestCase):
         """Attempt to read a secret without a token or Project-Id
 
         Should return 400"""
-        # test_model = secret_models.SecretModel(**secret_create_defaults_data)
-        secret_ref = 'http://localhost:9311/v1/secrets/'
-        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
-
         headers = {'Accept': '*/*',
                    'Accept-Encoding': '*/*'}
 
-        resp = self.client.get(secret_ref, extra_headers=headers,
+        resp = self.client.get(bogus_secret_ref, extra_headers=headers,
                                use_auth=False)
 
         self.assertEqual(resp.status_code, 401)
@@ -242,13 +269,11 @@ class SecretsTestCase(base.TestCase):
         """Attempt to update a secret without a token or Project-Id
 
         Should return 400"""
-        secret_ref = 'http://localhost:9311/v1/secrets/'
-        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
         headers = {'Content-Type': 'text/plain',
                    'Content-Encoding': 'base64'}
 
-        resp = self.client.put(secret_ref, data=None, extra_headers=headers,
-                               use_auth=False)
+        resp = self.client.put(bogus_secret_ref, data=None,
+                               extra_headers=headers, use_auth=False)
 
         self.assertEqual(resp.status_code, 401)
 
@@ -257,10 +282,8 @@ class SecretsTestCase(base.TestCase):
         """Attempt to delete a secret without a token or Project-Id
 
         Should return 400"""
-        secret_ref = 'http://localhost:9311/v1/secrets/'
-        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
 
-        resp = self.client.delete(secret_ref, use_auth=False)
+        resp = self.client.delete(bogus_secret_ref, use_auth=False)
 
         self.assertEqual(resp.status_code, 401)
 
@@ -284,10 +307,10 @@ class SecretsTestCase(base.TestCase):
         """Create a secret without a token
 
         Should return 401"""
-        test_model = secret_models.SecretModel(**secret_create_defaults_data)
+        model = secret_models.SecretModel(**secret_create_defaults_data)
         headers = {'X-Project-Id': bogus_project_id}
 
-        resp = self.client.post('secrets', request_model=test_model,
+        resp = self.client.post('secrets', request_model=model,
                                 use_auth=False, extra_headers=headers)
 
         self.assertEqual(resp.status_code, 401)
@@ -297,14 +320,11 @@ class SecretsTestCase(base.TestCase):
         """Attempt to read a secret without a token or Project-Id
 
         Should return 401"""
-        secret_ref = 'http://localhost:9311/v1/secrets/'
-        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
-
         headers = {'Accept': '*/*',
                    'Accept-Encoding': '*/*',
                    'X-Project-Id': bogus_project_id}
 
-        resp = self.client.get(secret_ref, extra_headers=headers,
+        resp = self.client.get(bogus_secret_ref, extra_headers=headers,
                                use_auth=False)
 
         self.assertEqual(resp.status_code, 401)
@@ -314,14 +334,12 @@ class SecretsTestCase(base.TestCase):
         """Attempt to update a secret without a token or Project-Id
 
         Should return 401"""
-        secret_ref = 'http://localhost:9311/v1/secrets/'
-        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
         headers = {'Content-Type': 'text/plain',
                    'Content-Encoding': 'base64',
                    'X-Project-Id': bogus_project_id}
 
-        resp = self.client.put(secret_ref, data=None, extra_headers=headers,
-                               use_auth=False)
+        resp = self.client.put(bogus_secret_ref, data=None,
+                               extra_headers=headers, use_auth=False)
 
         self.assertEqual(resp.status_code, 401)
 
@@ -330,11 +348,9 @@ class SecretsTestCase(base.TestCase):
         """Attempt to delete a secret without a token or Project-Id
 
         Should return 401"""
-        secret_ref = 'http://localhost:9311/v1/secrets/'
-        secret_ref += '91ff8f86-677c-428c-bda6-1b61db872add'
         headers = {'X-Project-Id': bogus_project_id}
 
-        resp = self.client.delete(secret_ref, use_auth=False,
+        resp = self.client.delete(bogus_secret_ref, use_auth=False,
                                   extra_headers=headers)
 
         self.assertEqual(resp.status_code, 401)
