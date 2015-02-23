@@ -23,6 +23,7 @@ from barbican.common import exception
 from barbican.common import utils
 from barbican import i18n as u
 
+_SECRET_STORE = None
 
 CONF = cfg.CONF
 DEFAULT_PLUGIN_NAMESPACE = 'barbican.secretstore.plugin'
@@ -206,6 +207,17 @@ class SecretType(object):
     private key.
     """
     PRIVATE = "private"
+    """Constant to define the passphrase type. Used by getSecret to retrieve a
+    passphrase."""
+    PASSPHRASE = "passphrase"
+    """Constant to define the certificate type. Used by getSecret to retrieve a
+    certificate."""
+    CERTIFICATE = "certificate"
+    """Constant to define the opaque date type. Used by getSecret to retrieve
+    opaque data. Opaque data can be any kind of data. This data type signals to
+    Barbican to just store the information and do not worry about the format or
+    encoding. This is the default type if no type is specified by the user."""
+    OPAQUE = "opaque"
 
 
 class KeyAlgorithm(object):
@@ -539,3 +551,10 @@ class SecretStorePluginManager(named.NamedExtensionManager):
             if ext.obj.generate_supports(key_spec):
                 return ext.obj
         raise SecretStoreSupportedPluginNotFound()
+
+
+def get_manager():
+    global _SECRET_STORE
+    if not _SECRET_STORE:
+        _SECRET_STORE = SecretStorePluginManager()
+    return _SECRET_STORE

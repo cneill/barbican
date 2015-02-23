@@ -1055,6 +1055,17 @@ class WhenTestingStoredKeyOrderValidator(utils.BaseTestCase):
                           self.validator.validate,
                           self.order_req)
 
+    def test_should_pass_with_profile_and_ca_id(self):
+        self.meta['ca_id'] = 'my_ca_id'
+        self.meta['profile'] = 'my_profile'
+        self.validator.validate(self.order_req)
+
+    def test_should_raise_with_profile_and_no_ca_id(self):
+        self.meta['profile'] = 'my_profile'
+        self.assertRaises(excep.MissingMetadataField,
+                          self.validator.validate,
+                          self.order_req)
+
     def test_should_pass_with_no_extensions_data(self):
         del self.meta['extensions']
         self.validator.validate(self.order_req)
@@ -1066,7 +1077,14 @@ class WhenTestingStoredKeyOrderValidator(utils.BaseTestCase):
                           self.validator.validate,
                           self.order_req)
 
-    @testtools.skip("Not yet implemented")
+    def test_should_pass_with_two_cn_in_dn(self):
+        self.meta['subject_dn'] = "CN=example1 CN=example2"
+        self.validator.validate(self.order_req)
+
+    def test_should_pass_with_blank_dn(self):
+        self.meta['subject_dn'] = ""
+        self.validator.validate(self.order_req)
+
     def test_should_raise_with_bad_subject_dn(self):
         self.meta['subject_dn'] = "Bad subject DN data"
         self.assertRaises(excep.InvalidSubjectDN,
