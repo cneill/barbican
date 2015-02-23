@@ -25,6 +25,7 @@ import time
 import uuid
 
 from oslo_config import cfg
+from oslo_log import log
 import sqlalchemy
 from sqlalchemy import or_
 import sqlalchemy.orm as sa_orm
@@ -40,17 +41,19 @@ LOG = utils.getLogger(__name__)
 
 
 _ENGINE = None
-_MAKER = None
+_SESSION_FACTORY = None
 BASE = models.BASE
 sa_logger = None
 
 # Singleton repository references, instantiated via get_xxxx_repository()
 #   functions below.
+_CONTAINER_CONSUMER_REPOSITORY = None
 _CONTAINER_REPOSITORY = None
 _CONTAINER_SECRET_REPOSITORY = None
 _ENCRYPTED_DATUM_REPOSITORY = None
 _KEK_DATUM_REPOSITORY = None
 _ORDER_PLUGIN_META_REPOSITORY = None
+_ORDER_BARBICAN_META_REPOSITORY = None
 _ORDER_REPOSITORY = None
 _PROJECT_REPOSITORY = None
 _PROJECT_SECRET_REPOSITORY = None
@@ -71,36 +74,56 @@ db_opts = [
 
 CONF = cfg.CONF
 CONF.register_opts(db_opts)
-CONF.import_opt('debug', 'barbican.openstack.common.log')
+log.register_options(CONF)
 
 
 def hard_reset():
     """Performs a hard reset of database resources, used for unit testing."""
-    global _ENGINE, _MAKER
+    # TODO(jvrbanac): Remove this as soon as we improve our unit testing
+    # to not require this.
+    global _ENGINE, _SESSION_FACTORY
     if _ENGINE:
         _ENGINE.dispose()
     _ENGINE = None
-    _MAKER = None
+    _SESSION_FACTORY = None
+
+    # Make sure we reinitialize the engine and session factory
+    setup_database_engine_and_factory()
+
+
+def setup_database_engine_and_factory():
+    global sa_logger, _SESSION_FACTORY, _ENGINE
+
+    LOG.info('Setting up database engine and session factory')
+    LOG.debug('Sql connection = %s', CONF.sql_connection)
+    sa_logger = logging.getLogger('sqlalchemy.engine')
+    if CONF.debug:
+        sa_logger.setLevel(logging.DEBUG)
+
+    _ENGINE = _get_engine(_ENGINE)
+
+    # Utilize SQLAlchemy's scoped_session to ensure that we only have one
+    # session instance per thread.
+    session_maker = sa_orm.sessionmaker(bind=_ENGINE)
+    _SESSION_FACTORY = sqlalchemy.orm.scoped_session(session_maker)
 
 
 def start():
-    """Start database and establish a read/write connection to it.
+    """Start for read-write requests placeholder
 
     Typically performed at the start of a request cycle, say for POST or PUT
     requests.
     """
-    configure_db()
-    get_session()
+    pass
 
 
 def start_read_only():
-    """Start database and establish a read-only connection to it.
+    """Start for read-only requests placeholder
 
     Typically performed at the start of a request cycle, say for GET or HEAD
     requests.
     """
-    # TODO(john-wood-w) Add optional, separate engine/connection for reads.
-    start()
+    pass
 
 
 def commit():
@@ -120,51 +143,17 @@ def rollback():
 
 
 def clear():
-    """Dispose of this session, releases database resources.
+    """Dispose of this session, releases db resources.
 
     Typically performed at the end of a request cycle, after a
     commit() or rollback().
     """
-    _MAKER.remove()
-
-
-def setup_db_env():
-    """Setup configuration for database."""
-    global sa_logger
-
-    LOG.debug("Sql connection = %s", CONF.sql_connection)
-    sa_logger = logging.getLogger('sqlalchemy.engine')
-    if CONF.debug:
-        sa_logger.setLevel(logging.DEBUG)
-
-
-def configure_db():
-    """Wrapper method for setting up and configuring the database
-
-    Establishes the database, create an engine if needed, and
-    register the models.
-    """
-    setup_db_env()
-    get_engine()
+    _SESSION_FACTORY.remove()
 
 
 def get_session():
     """Helper method to grab session."""
-    global _MAKER
-    if not _MAKER:
-        get_engine()
-        get_maker()
-        assert(_MAKER)
-    session = _MAKER()
-    return session
-
-
-def get_engine():
-    """Return a SQLAlchemy engine."""
-    """May assign _ENGINE if not already assigned"""
-    global _ENGINE
-    _ENGINE = _get_engine(_ENGINE)
-    return _ENGINE
+    return _SESSION_FACTORY()
 
 
 def _get_engine(engine):
@@ -201,19 +190,6 @@ def _get_engine(engine):
             LOG.info(u._LI('Not auto-creating barbican registry DB'))
 
     return engine
-
-
-def get_maker():
-    """Return a SQLAlchemy sessionmaker."""
-    """May assign __MAKER if not already assigned"""
-    global _MAKER, _ENGINE
-    assert _ENGINE
-    if not _MAKER:
-        # Utilize SQLAlchemy's scoped_session to ensure that we only have one
-        #   session instance per thread.
-        _MAKER = sqlalchemy.orm.scoped_session(
-            sa_orm.sessionmaker(bind=_ENGINE))
-    return _MAKER
 
 
 def is_db_connection_error(args):
@@ -364,6 +340,8 @@ class Repositories(object):
             self._set_repo('order_repo', OrderRepo, kwargs)
             self._set_repo('order_plugin_meta_repo', OrderPluginMetadatumRepo,
                            kwargs)
+            self._set_repo('order_barbican_meta_repo',
+                           OrderBarbicanMetadatumRepo, kwargs)
             self._set_repo('transport_key_repo', TransportKeyRepo, kwargs)
             self._set_repo('container_repo', ContainerRepo, kwargs)
             self._set_repo('container_secret_repo', ContainerSecretRepo,
@@ -772,9 +750,9 @@ class SecretStoreMetadatumRepo(BaseRepo):
             metadata = query.all()
 
         except sa_orm.exc.NoResultFound:
-            metadata = dict()
+            metadata = {}
 
-        return dict((m.key, m.value) for m in metadata)
+        return {m.key: m.value for m in metadata}
 
     def _do_entity_name(self):
         """Sub-class hook: return entity name, such as for debugging."""
@@ -959,7 +937,7 @@ class OrderRepo(BaseRepo):
 class OrderPluginMetadatumRepo(BaseRepo):
     """Repository for the OrderPluginMetadatum entity
 
-    Stores key/value plugin information on behalf of a Order.
+    Stores key/value plugin information on behalf of an Order.
     """
 
     def save(self, metadata, order_model):
@@ -991,9 +969,9 @@ class OrderPluginMetadatumRepo(BaseRepo):
             metadata = query.all()
 
         except sa_orm.exc.NoResultFound:
-            metadata = dict()
+            metadata = {}
 
-        return dict((m.key, m.value) for m in metadata)
+        return {m.key: m.value for m in metadata}
 
     def _do_entity_name(self):
         """Sub-class hook: return entity name, such as for debugging."""
@@ -1002,6 +980,59 @@ class OrderPluginMetadatumRepo(BaseRepo):
     def _do_build_get_query(self, entity_id, external_project_id, session):
         """Sub-class hook: build a retrieve query."""
         query = session.query(models.OrderPluginMetadatum)
+        return query.filter_by(id=entity_id)
+
+    def _do_validate(self, values):
+        """Sub-class hook: validate values."""
+        pass
+
+
+class OrderBarbicanMetadatumRepo(BaseRepo):
+    """Repository for the OrderBarbicanMetadatum entity
+
+    Stores key/value plugin information on behalf of a Order.
+    """
+
+    def save(self, metadata, order_model):
+        """Saves the the specified metadata for the order.
+
+        :raises NotFound if entity does not exist.
+        """
+        now = timeutils.utcnow()
+        session = get_session()
+
+        for k, v in metadata.items():
+            meta_model = models.OrderBarbicanMetadatum(k, v)
+            meta_model.updated_at = now
+            meta_model.order = order_model
+            meta_model.save(session=session)
+
+    def get_metadata_for_order(self, order_id):
+        """Returns a dict of OrderBarbicanMetadatum instances."""
+
+        session = get_session()
+
+        try:
+            query = session.query(models.OrderBarbicanMetadatum)
+            query = query.filter_by(deleted=False)
+
+            query = query.filter(
+                models.OrderBarbicanMetadatum.order_id == order_id)
+
+            metadata = query.all()
+
+        except sa_orm.exc.NoResultFound:
+            metadata = {}
+
+        return {m.key: m.value for m in metadata}
+
+    def _do_entity_name(self):
+        """Sub-class hook: return entity name, such as for debugging."""
+        return "OrderBarbicanMetadatum"
+
+    def _do_build_get_query(self, entity_id, external_project_id, session):
+        """Sub-class hook: build a retrieve query."""
+        query = session.query(models.OrderBarbicanMetadatum)
         return query.filter_by(id=entity_id)
 
     def _do_validate(self, values):
@@ -1245,6 +1276,13 @@ class TransportKeyRepo(BaseRepo):
         pass
 
 
+def get_container_consumer_repository():
+    """Returns a singleton Container Consumer repository instance."""
+    global _CONTAINER_CONSUMER_REPOSITORY
+    return _get_repository(_CONTAINER_CONSUMER_REPOSITORY,
+                           ContainerConsumerRepo)
+
+
 def get_container_repository():
     """Returns a singleton Container repository instance."""
     global _CONTAINER_REPOSITORY
@@ -1274,6 +1312,13 @@ def get_order_plugin_meta_repository():
     global _ORDER_PLUGIN_META_REPOSITORY
     return _get_repository(_ORDER_PLUGIN_META_REPOSITORY,
                            OrderPluginMetadatumRepo)
+
+
+def get_order_barbican_meta_repository():
+    """Returns a singleton Order-Barbican meta repository instance."""
+    global _ORDER_BARBICAN_META_REPOSITORY
+    return _get_repository(_ORDER_BARBICAN_META_REPOSITORY,
+                           OrderBarbicanMetadatumRepo)
 
 
 def get_order_repository():

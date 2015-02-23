@@ -17,7 +17,6 @@
 API application handler for Cloudkeep's Barbican
 """
 import pecan
-from webob import exc as webob_exc
 
 try:
     import newrelic.agent
@@ -26,95 +25,68 @@ except ImportError:
     newrelic_loaded = False
 
 from oslo_config import cfg
+from oslo_log import log
 
 from barbican.api.controllers import containers
 from barbican.api.controllers import orders
-from barbican.api.controllers import performance
 from barbican.api.controllers import secrets
 from barbican.api.controllers import transportkeys
 from barbican.api.controllers import versions
+from barbican.api import hooks
 from barbican.common import config
 from barbican.model import repositories
-from barbican.openstack.common import jsonutils as json
-from barbican.openstack.common import log
 from barbican import queue
 
 if newrelic_loaded:
     newrelic.agent.initialize('/etc/newrelic/newrelic.ini')
 
 
-class JSONErrorHook(pecan.hooks.PecanHook):
-
-    def on_error(self, state, exc):
-        if isinstance(exc, webob_exc.HTTPError):
-            exc.body = json.dumps({
-                'code': exc.status_int,
-                'title': exc.title,
-                'description': exc.detail
-            })
-            state.response.content_type = "application/json"
-            return exc.body
+class RootController(object):
+    secrets = secrets.SecretsController()
+    orders = orders.OrdersController()
+    containers = containers.ContainersController()
+    transport_keys = transportkeys.TransportKeysController()
 
 
-class PecanAPI(pecan.Pecan):
+def build_wsgi_app(controller=None, transactional=False):
+    """WSGI application creation helper
 
-    # For performance testing only
-    performance_uri = 'mu-1a90dfd0-7e7abba4-4e459908-fc097d60'
-    performance_controller = performance.PerformanceController()
+    :param controller: Overrides default application controller
+    :param transactional: Adds transaction hook for all requests
+    """
+    request_hooks = [hooks.JSONErrorHook()]
+    if transactional:
+        request_hooks.append(hooks.BarbicanTransactionHook())
 
-    def __init__(self, *args, **kwargs):
-        hooks = [JSONErrorHook()]
-        if kwargs.pop('is_transactional', None):
-            transaction_hook = pecan.hooks.TransactionHook(
-                repositories.start,
-                repositories.start_read_only,
-                repositories.commit,
-                repositories.rollback,
-                repositories.clear
-            )
-            hooks.append(transaction_hook)
-        kwargs['hooks'] = hooks
-        super(PecanAPI, self).__init__(*args, **kwargs)
-
-    def route(self, req, node, path):
-        # parse the first part of the URL. It could be the
-        # resource name or the ID of the performance controller
-        # example: /secrets
-        parts = path.split('/')
-
-        first_path = None
-        if len(parts) > 1:
-            first_path = parts[1]
-
-        # Route to the special performance controller
-        if first_path == self.performance_uri:
-            return self.performance_controller.index, []
-
-        controller, remainder = super(PecanAPI, self).route(req, node, path)
-
-        return controller, remainder
+    # Create WSGI app
+    wsgi_app = pecan.Pecan(
+        controller or RootController(),
+        hooks=request_hooks,
+        force_canonical=False
+    )
+    return wsgi_app
 
 
 def create_main_app(global_config, **local_conf):
     """uWSGI factory method for the Barbican-API application."""
 
-    # Configure oslo logging and configuration services.
-    config.parse_args()
-    log.setup('barbican')
-    config.setup_remote_pydev_debug()
-
     # Queuing initialization
     CONF = cfg.CONF
     queue.init(CONF, is_server_side=False)
 
-    class RootController(object):
-        secrets = secrets.SecretsController()
-        orders = orders.OrdersController()
-        containers = containers.ContainersController()
-        transport_keys = transportkeys.TransportKeysController()
+    # Configure oslo logging and configuration services.
+    config.parse_args()
+    log.setup(CONF, 'barbican')
+    config.setup_remote_pydev_debug()
 
-    wsgi_app = PecanAPI(
-        RootController(), is_transactional=True, force_canonical=False)
+    # Initializing the database engine and session factory before the app
+    # starts ensures we don't lose requests due to lazy initialiation of db
+    # connections.
+    repositories.setup_database_engine_and_factory()
+
+    # Setup app with transactional hook enabled
+    wsgi_app = build_wsgi_app(transactional=True)
+
     if newrelic_loaded:
         wsgi_app = newrelic.agent.WSGIApplicationWrapper(wsgi_app)
     return wsgi_app
