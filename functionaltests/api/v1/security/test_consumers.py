@@ -16,6 +16,8 @@ import copy
 
 from testtools import testcase
 
+from barbican.tests import utils
+
 from functionaltests.api import base
 from functionaltests.api.v1.behaviors import consumer_behaviors
 from functionaltests.api.v1.behaviors import container_behaviors
@@ -53,7 +55,7 @@ create_container_data = {
     ]
 }
 
-
+@utils.parameterized_test_case
 class ConsumersTestCase(base.TestCase):
     default_data = default_consumer_data
 
@@ -99,7 +101,43 @@ class ConsumersTestCase(base.TestCase):
     def tearDown(self):
         self.secret_behaviors.delete_all_created_secrets()
         super(ConsumersTestCase, self).tearDown()
+    
+    # JUNK DATA #
+    @utils.parameterized_dataset(
+        {'ssh': ['ssh://127.0.0.1:22'],
+         'gopher': ['gopher://127.0.0.1:80'],
+         'javascript': ['javascript:alert(1)'],
+         'huge': ['a' * 1000000],    # RETURNS 400 - BAD JSON
+         'double_quote': ['"']
+         })
+    @testcase.attr('negative')
+    def test_bogus_URL(self, payload):
+        model = consumer_model.ConsumerModel(**self.consumer_data)
+        overrides = {'URL': payload}
+        model.override_values(**overrides)
+        resp, consumer_data = self.consumer_behaviors.create_consumer(
+            model, self.container_ref
+        )
+        self.assertEqual(resp.status_code, 400)
 
+    # RESOURCE EXHAUSTION #
+
+    '''
+    @testcase.attr('negative')
+    def test_many_consumers(self):
+        """Test creating a huge number of consumers to look for resource
+        exhaustion
+
+        SLOW - MEMORY INTENSIVE; WILL GO UNTIL ALL MEMORY IS GONE
+        Should return 200s for all requests"""
+        for i in xrange(10000):
+            model_data = {'name': 'a' * (250000 + i), 'URL': 'a' * 250000}
+            model = consumer_model.ConsumerModel(**model_data)
+            resp, consumer_data = self.consumer_behaviors.create_consumer(
+                model, self.container_ref
+            )
+            self.assertEqual(resp.status_code, 200)
+    '''
     # UNAUTHED #
 
     @testcase.attr('negative')
@@ -112,6 +150,7 @@ class ConsumersTestCase(base.TestCase):
 
         self.assertEqual(401, resp.status_code)
 
+    @testcase.attr('negative')
     def test_unauthed_gets_no_proj_id(self):
         resp = self.client.get(
             '{0}/consumers'.format(self.container_ref), use_auth=False
@@ -119,6 +158,7 @@ class ConsumersTestCase(base.TestCase):
 
         self.assertEqual(401, resp.status_code)
 
+    @testcase.attr('negative')
     def test_unauthed_delete_no_proj_id(self):
         resp = self.client.delete(
             '{0}/consumers'.format(self.container_ref), use_auth=False
@@ -137,6 +177,7 @@ class ConsumersTestCase(base.TestCase):
 
         self.assertEqual(401, resp.status_code)
 
+    @testcase.attr('negative')
     def test_unauthed_gets_w_proj_id(self):
         headers = {'X-Project-Id': self.dummy_proj_id}
         resp = self.client.get(
@@ -146,6 +187,7 @@ class ConsumersTestCase(base.TestCase):
 
         self.assertEqual(401, resp.status_code)
 
+    @testcase.attr('negative')
     def test_unauthed_delete_w_proj_id(self):
         headers = {'X-Project-Id': self.dummy_proj_id}
         resp = self.client.delete(
