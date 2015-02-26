@@ -77,22 +77,29 @@ class OrdersTestCase(base.TestCase):
         model = order_models.OrderModel(**self.default_data)
 
         resp = self.client.post(
-            'orders', request_model=model, use_auth=False)
+            'orders', request_model=model, use_auth=False
+        )
         self.assertEqual(401, resp.status_code)
 
     @testcase.attr('negative')
     def test_unauthed_get_no_proj_id(self):
-        resp = self.client.get(self.dummy_ref, use_auth=False)
+        resp = self.client.get(
+            self.dummy_ref, use_auth=False
+        )
         self.assertEqual(401, resp.status_code)
 
     @testcase.attr('negative')
     def test_unauthed_gets_no_proj_id(self):
-        resp = self.client.get('orders', use_auth=False)
+        resp = self.client.get(
+            'orders', use_auth=False
+        )
         self.assertEqual(401, resp.status_code)
 
     @testcase.attr('negative')
     def test_unauthed_delete_no_proj_id(self):
-        resp = self.client.delete(self.dummy_ref, use_auth=False)
+        resp = self.client.delete(
+            self.dummy_ref, use_auth=False
+        )
         self.assertEqual(401, resp.status_code)
 
     @testcase.attr('negative')
@@ -101,25 +108,30 @@ class OrdersTestCase(base.TestCase):
         headers = {'X-Project-Id': self.dummy_proj_id}
         resp = self.client.post(
             'orders', request_model=model, use_auth=False,
-            extra_headers=headers)
+            extra_headers=headers
+        )
         self.assertEqual(401, resp.status_code)
 
     @testcase.attr('negative')
     def test_unauthed_get_w_proj_id(self):
         headers = {'X-Project-Id': self.dummy_proj_id}
         resp = self.client.get(
-            self.dummy_ref, use_auth=False, extra_headers=headers)
+            self.dummy_ref, use_auth=False, extra_headers=headers
+        )
         self.assertEqual(401, resp.status_code)
 
     @testcase.attr('negative')
     def test_unauthed_gets_w_proj_id(self):
         headers = {'X-Project-Id': self.dummy_proj_id}
-        resp = self.client.get('orders', use_auth=False, extra_headers=headers)
+        resp = self.client.get(
+            'orders', use_auth=False, extra_headers=headers
+        )
         self.assertEqual(401, resp.status_code)
 
     @testcase.attr('negative')
     def test_unauthed_delete_w_proj_id(self):
         headers = {'X-Project-Id': self.dummy_proj_id}
         resp = self.client.delete(
-            self.dummy_ref, use_auth=False, extra_headers=headers)
+            self.dummy_ref, use_auth=False, extra_headers=headers
+        )
         self.assertEqual(401, resp.status_code)
