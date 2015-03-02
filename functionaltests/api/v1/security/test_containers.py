@@ -81,7 +81,8 @@ class ContainersTestCase(base.TestCase):
         super(ContainersTestCase, self).setUp()
         self.secret_behaviors = secret_behaviors.SecretBehaviors(self.client)
         self.behaviors = container_behaviors.ContainerBehaviors(
-            self.client)
+            self.client
+        )
 
         # Set up three secrets
         secret_ref_1 = self._create_a_secret()
@@ -131,7 +132,8 @@ class ContainersTestCase(base.TestCase):
         RETURNING 400 FOR UNPARSEABLE JSON - NO MAX REQUEST LENGTH!
         Should return 413"""
         model = container_models.ContainerModel(
-            **create_container_defaults_data)
+            **create_container_defaults_data
+        )
         overrides = {'name': 'a' * 1000000}
         model.override_values(**overrides)
         resp, container_ref = self.behaviors.create_container(model)
@@ -145,7 +147,8 @@ class ContainersTestCase(base.TestCase):
         RETURNING 400 FOR UNPARSEABLE JSON - NO MAX REQUEST LENGTH!
         Should return 413"""
         model = container_models.ContainerModel(
-            **create_container_defaults_data)
+            **create_container_defaults_data
+        )
         overrides = {'type': 'a' * 1000000}
         model.override_values(**overrides)
         resp, secret_ref = self.behaviors.create_container(model)
@@ -177,10 +180,12 @@ class ContainersTestCase(base.TestCase):
 
         Should return 415"""
         model = container_models.ContainerModel(
-            **create_container_defaults_data)
+            **create_container_defaults_data
+        )
         headers = {'Content-Type': payload}
         resp, secret_ref = self.behaviors.create_container(
-            model, extra_headers=headers)
+            model, extra_headers=headers
+        )
         self.assertEqual(resp.status_code, 415)
 
     # LOGIC TESTS #
@@ -224,8 +229,10 @@ class ContainersTestCase(base.TestCase):
             **create_container_defaults_data)
         headers = {'X-Auth-Token': 'a' * 3500}
 
-        resp = self.client.post('containers', request_model=model,
-                                use_auth=False, extra_headers=headers)
+        resp = self.client.post(
+            'containers', request_model=model, use_auth=False,
+            extra_headers=headers
+        )
 
         self.assertEqual(resp.status_code, 401)
 
@@ -235,10 +242,12 @@ class ContainersTestCase(base.TestCase):
 
         Should return 401"""
         model = container_models.ContainerModel(
-            **create_container_defaults_data)
+            **create_container_defaults_data
+        )
 
-        resp = self.client.post('containers', request_model=model,
-                                use_auth=False)
+        resp = self.client.post(
+            'containers', request_model=model, use_auth=False
+        )
 
         self.assertEqual(resp.status_code, 401)
 
@@ -250,8 +259,9 @@ class ContainersTestCase(base.TestCase):
         headers = {'Accept': '*/*',
                    'Accept-Encoding': '*/*'}
 
-        resp = self.client.get(bogus_container_ref, extra_headers=headers,
-                               use_auth=False)
+        resp = self.client.get(
+            bogus_container_ref, extra_headers=headers, use_auth=False
+        )
 
         self.assertEqual(resp.status_code, 401)
 
@@ -270,13 +280,16 @@ class ContainersTestCase(base.TestCase):
 
         Should return 401"""
         model = container_models.ContainerModel(
-            **create_container_defaults_data)
+            **create_container_defaults_data
+        )
 
         headers = {'X-Auth-Token': 'a' * 3500,
                    'X-Project-Id': bogus_project_id}
 
-        resp = self.client.post('containers', request_model=model,
-                                use_auth=False, extra_headers=headers)
+        resp = self.client.post(
+            'containers', request_model=model, use_auth=False,
+            extra_headers=headers
+        )
 
         self.assertEqual(resp.status_code, 401)
 
@@ -286,12 +299,15 @@ class ContainersTestCase(base.TestCase):
 
         Should return 401"""
         model = container_models.ContainerModel(
-            **create_container_defaults_data)
+            **create_container_defaults_data
+        )
 
         headers = {'X-Project-Id': bogus_project_id}
 
-        resp = self.client.post('containers', request_model=model,
-                                use_auth=False, extra_headers=headers)
+        resp = self.client.post(
+            'containers', request_model=model, use_auth=False,
+            extra_headers=headers
+        )
 
         self.assertEqual(resp.status_code, 401)
 
@@ -305,8 +321,9 @@ class ContainersTestCase(base.TestCase):
                    'Accept-Encoding': '*/*',
                    'X-Project-Id': bogus_project_id}
 
-        resp = self.client.get(bogus_container_ref, extra_headers=headers,
-                               use_auth=False)
+        resp = self.client.get(
+            bogus_container_ref, extra_headers=headers, use_auth=False
+        )
 
         self.assertEqual(resp.status_code, 401)
 
@@ -317,7 +334,8 @@ class ContainersTestCase(base.TestCase):
         Should return 401"""
         headers = {'X-Project-Id': bogus_project_id}
 
-        resp = self.client.delete(bogus_container_ref, use_auth=False,
-                                  extra_headers=headers)
+        resp = self.client.delete(
+            bogus_container_ref, use_auth=False, extra_headers=headers
+        )
 
         self.assertEqual(resp.status_code, 401)
