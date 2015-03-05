@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 from testtools import testcase
 
 from barbican.tests import utils
 from functionaltests.api import base
 from functionaltests.api.v1.behaviors import secret_behaviors
 from functionaltests.api.v1.models import secret_models
-from functionaltests.api.v1.security import security_utils
+from securitytests import security_utils
 
 # TODO(tdink) Move to a config file
 secret_create_defaults_data = {
@@ -79,24 +81,24 @@ secret_create_all_the_things = {
     'created': ''
 }
 
-fuzz_header_dataset = \
-    {
-        'accept': {'header': 'Accept',
-                   'payloads': security_utils.get_fuzz_strings('ascii')},
-        'cookie': {'header': 'Cookie',
-                   'payloads': security_utils.get_fuzz_strings('ascii')},
-        'host': {'header': 'Host',
-                 'payloads': security_utils.get_fuzz_strings('ascii')},
-        'content_type': {'header': 'Content-Type',
-                         'payloads': security_utils.get_fuzz_strings('ascii')},
-        'accept_enc': {'header': 'Accept-Encoding',
-                       'payloads': security_utils.get_fuzz_strings('ascii')},
-        'user_agent': {'header': 'User-Agent',
-                       'payloads': security_utils.get_fuzz_strings('ascii')},
-        'connection': {'header': 'Connection',
-                       'payloads': security_utils.get_fuzz_strings('ascii')},
+fuzzer = security_utils.Fuzzer()
 
-    }
+fuzz_header_dataset = {
+    'accept': {'header': 'Accept',
+               'payloads': fuzzer.get_strings('ascii')},
+    'cookie': {'header': 'Cookie',
+               'payloads': fuzzer.get_strings('ascii')},
+    'host': {'header': 'Host',
+             'payloads': fuzzer.get_strings('ascii')},
+    'content_type': {'header': 'Content-Type',
+                     'payloads': fuzzer.get_strings('ascii')},
+    'accept_enc': {'header': 'Accept-Encoding',
+                   'payloads': fuzzer.get_strings('ascii')},
+    'user_agent': {'header': 'User-Agent',
+                   'payloads': fuzzer.get_strings('ascii')},
+    'connection': {'header': 'Connection',
+                   'payloads': fuzzer.get_strings('ascii')},
+}
 
 
 @utils.parameterized_test_case
@@ -110,13 +112,14 @@ class SecretsTestCase(base.TestCase):
         self.behaviors.delete_all_created_secrets()
         super(SecretsTestCase, self).tearDown()
 
+    '''
     @testcase.attr('security')
     def test_fuzz_create_secret_all_single(self):
         """Create a secret with 1 param as fuzzstring, rest undefined
         SLOOOOOOOOW
 
         Should return 400 ?"""
-        models = security_utils.fuzz_model(
+        models = fuzzer.fuzz_model(
             secret_models.SecretModel,
             skeleton=secret_create_defaults_data,
             fuzz_string_type='all',
@@ -131,7 +134,7 @@ class SecretsTestCase(base.TestCase):
         """Create a secret with all params as fuzzstring, rest undefined
 
         Should return 400 ?"""
-        models = security_utils.fuzz_model(
+        models = fuzzer.fuzz_model(
             secret_models.SecretModel,
             skeleton=secret_create_all_the_things,
             fuzz_string_type='all',
@@ -148,7 +151,7 @@ class SecretsTestCase(base.TestCase):
         SLOOOOOOOOOOOOOOOOOOOOOOW
 
         Should return 400 ?"""
-        models = security_utils.fuzz_model(
+        models = fuzzer.fuzz_model(
             secret_models.SecretModel,
             # skeleton=secret_create_all_the_things,
             skeleton=secret_create_defaults_data,
@@ -161,8 +164,8 @@ class SecretsTestCase(base.TestCase):
             assert(resp.status_code in [400, 201])
 
     @utils.parameterized_dataset({
-        'unicode': [security_utils.get_fuzz_strings('unicode')],
-        'ascii': [security_utils.get_fuzz_strings('ascii')]
+        'unicode': [fuzzer.get_strings('unicode')],
+        'ascii': [fuzzer.get_strings('ascii')]
     })
     @testcase.attr('negative')
     def test_secret_create_defaults_invalid_payload(self, payloads):
@@ -178,8 +181,8 @@ class SecretsTestCase(base.TestCase):
             self.assertIn(resp.status_code, [400, 201])
 
     @utils.parameterized_dataset({
-        'unicode': [security_utils.get_fuzz_strings('unicode')],
-        'ascii': [security_utils.get_fuzz_strings('ascii')]
+        'unicode': [fuzzer.get_strings('unicode')],
+        'ascii': [fuzzer.get_strings('ascii')]
     })
     @testcase.attr('negative')
     def test_fuzz_project_id(self, payloads):
@@ -235,3 +238,20 @@ class SecretsTestCase(base.TestCase):
                 resp = self.client.post('secrets', request_model=model,
                                         extra_headers=headers, use_auth=False)
                 self.assertEqual(resp.status_code, 401)
+    '''
+
+    # JSON RECURSION #
+
+    @utils.parameterized_dataset(fuzzer.get_dataset('json_recursion'))
+    @testcase.attr('negative')
+    def test_fuzz_create_payload_json_recursion(self, payload):
+        """Creates a secret with evil recursive json as payload
+
+        Should return 400"""
+        model = secret_models.SecretModel(**secret_create_defaults_data)
+        overrides = {
+            'payload': json.loads(payload)
+        }
+        model.override_values(**overrides)
+        resp, secret_ref = self.behaviors.create_secret(model)
+        self.assertEqual(resp.status_code, 400)

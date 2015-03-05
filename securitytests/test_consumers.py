@@ -55,6 +55,7 @@ create_container_data = {
     ]
 }
 
+
 @utils.parameterized_test_case
 class ConsumersTestCase(base.TestCase):
     default_data = default_consumer_data
@@ -101,15 +102,15 @@ class ConsumersTestCase(base.TestCase):
     def tearDown(self):
         self.secret_behaviors.delete_all_created_secrets()
         super(ConsumersTestCase, self).tearDown()
-    
+
     # JUNK DATA #
-    @utils.parameterized_dataset(
-        {'ssh': ['ssh://127.0.0.1:22'],
-         'gopher': ['gopher://127.0.0.1:80'],
-         'javascript': ['javascript:alert(1)'],
-         'huge': ['a' * 1000000],    # RETURNS 400 - BAD JSON
-         'double_quote': ['"']
-         })
+    @utils.parameterized_dataset({
+        'ssh': ['ssh://127.0.0.1:22'],
+        'gopher': ['gopher://127.0.0.1:80'],
+        'javascript': ['javascript:alert(1)'],
+        'huge': ['a' * 1000000],    # RETURNS 400 - BAD JSON
+        'double_quote': ['"']
+    })
     @testcase.attr('negative')
     def test_bogus_URL(self, payload):
         model = consumer_model.ConsumerModel(**self.consumer_data)
@@ -122,7 +123,6 @@ class ConsumersTestCase(base.TestCase):
 
     # RESOURCE EXHAUSTION #
 
-    '''
     @testcase.attr('negative')
     def test_many_consumers(self):
         """Test creating a huge number of consumers to look for resource
@@ -137,7 +137,7 @@ class ConsumersTestCase(base.TestCase):
                 model, self.container_ref
             )
             self.assertEqual(resp.status_code, 200)
-    '''
+
     # UNAUTHED #
 
     @testcase.attr('negative')
