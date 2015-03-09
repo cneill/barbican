@@ -599,6 +599,45 @@ class SecretsTestCase(base.TestCase):
             self.assertIn(test_model.payload, get_resp.content)
 
     @utils.parameterized_dataset({
+        'text_content_type_none_encoding': {
+            'payload_content_type': 'text/plain',
+            'payload_content_encoding': None},
+
+        'utf8_text_content_type_none_encoding': {
+            'payload_content_type': 'text/plain; charset=utf-8',
+            'payload_content_encoding': None},
+
+        'no_space_utf8_text_content_type_none_encoding': {
+            'payload_content_type': 'text/plain;charset=utf-8',
+            'payload_content_encoding': None},
+
+        'octet_content_type_base64_encoding': {
+            'payload_content_type': 'application/octet-stream',
+            'payload_content_encoding': 'base64'}
+    })
+    @testcase.attr('positive', 'deprecated')
+    def test_secret_create_defaults_valid_types_and_encoding_old_way(self,
+                                                                     **kwargs):
+        """Creates secrets with various content types and encodings."""
+        test_model = secret_models.SecretModel(**secret_create_defaults_data)
+        test_model.override_values(**kwargs)
+        payload_content_encoding = test_model.payload_content_encoding
+
+        resp, secret_ref = self.behaviors.create_secret(test_model)
+        self.assertEqual(resp.status_code, 201)
+
+        get_resp = self.behaviors.get_secret_based_on_content_type(
+            secret_ref,
+            payload_content_type=test_model.payload_content_type,
+            payload_content_encoding=payload_content_encoding)
+
+        if payload_content_encoding == 'base64':
+            self.assertIn(test_model.payload,
+                          binascii.b2a_base64(get_resp.content))
+        else:
+            self.assertIn(test_model.payload, get_resp.content)
+
+    @utils.parameterized_dataset({
         'empty_content_type_and_encoding': {
             'payload_content_type': '',
             'payload_content_encoding': ''},
@@ -693,7 +732,8 @@ class SecretsTestCase(base.TestCase):
         'empty': [''],
         'array': [['boom']],
         'int': [123],
-        'none': [None]
+        'none': [None],
+        'bad_character': ['\u0080']
     })
     @testcase.attr('negative')
     def test_secret_create_defaults_invalid_payload(self, payload):
@@ -752,3 +792,22 @@ class SecretsTestCase(base.TestCase):
 
         resp, secret_ref = self.behaviors.create_secret(test_model)
         self.assertEqual(resp.status_code, 400)
+
+    @testcase.attr('positive')
+    def test_secret_create_change_host_header(self, **kwargs):
+        """Create a secret with a (possibly) malicious host name in header."""
+
+        test_model = secret_models.SecretModel(**secret_create_defaults_data)
+
+        malicious_hostname = 'some.bad.server.com'
+        changed_host_header = {'Host': malicious_hostname}
+
+        resp, secret_ref = self.behaviors.create_secret(
+            test_model, headers=changed_host_header)
+
+        self.assertEqual(resp.status_code, 201)
+
+        # get Location field from result and assert that it is NOT the
+        # malicious one.
+        regex = '.*{0}.*'.format(malicious_hostname)
+        self.assertNotRegexpMatches(resp.headers['location'], regex)

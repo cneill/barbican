@@ -26,6 +26,7 @@ import urllib
 import mock
 import pecan
 from six import moves
+from testtools import testcase
 import webtest
 
 from barbican import api
@@ -36,7 +37,7 @@ from barbican.common import hrefs
 from barbican.common import validators
 import barbican.context
 from barbican.model import models
-from barbican.openstack.common import timeutils
+from barbican.tests import database_utils
 from barbican.tests import utils
 
 
@@ -152,7 +153,8 @@ class SecretAllowAllMimeTypesDecoratorTest(utils.BaseTestCase):
                           self._empty_function)
 
 
-class FunctionalTest(utils.BaseTestCase):
+class FunctionalTest(utils.BaseTestCase, utils.MockModelRepositoryMixin,
+                     testcase.WithAttributes):
 
     def setUp(self):
         super(FunctionalTest, self).setUp()
@@ -170,19 +172,6 @@ class FunctionalTest(utils.BaseTestCase):
         return controllers.versions.VersionController()
 
 
-class WhenTestingVersionResource(FunctionalTest):
-
-    def test_should_return_200_on_get(self):
-        resp = self.app.get('/')
-        self.assertEqual(200, resp.status_int)
-
-    def test_should_return_version_json(self):
-        resp = self.app.get('/')
-
-        self.assertTrue('v1' in resp.json)
-        self.assertEqual('current', resp.json['v1'])
-
-
 class BaseSecretsResource(FunctionalTest):
     """Base test class for the Secrets resource."""
 
@@ -196,11 +185,7 @@ class BaseSecretsResource(FunctionalTest):
         self._init()
 
         class RootController(object):
-            secrets = controllers.secrets.SecretsController(
-                self.project_repo, self.secret_repo,
-                self.project_secret_repo, self.datum_repo, self.kek_repo,
-                self.secret_meta_repo, self.transport_key_repo
-            )
+            secrets = controllers.secrets.SecretsController()
 
         return RootController()
 
@@ -226,26 +211,39 @@ class BaseSecretsResource(FunctionalTest):
             self.secret_req['payload_content_encoding'] = (
                 payload_content_encoding)
 
+        # Set up mocked project
         self.external_project_id = 'keystone1234'
         self.project_entity_id = 'tid1234'
         self.project = models.Project()
         self.project.id = self.project_entity_id
         self.project.external_id = self.external_project_id
+
+        # Set up mocked project repo
         self.project_repo = mock.MagicMock()
         self.project_repo.find_by_external_project_id.return_value = (
             self.project)
+        self.setup_project_repository_mock(self.project_repo)
 
+        # Set up mocked secret
         self.secret = models.Secret()
-        self.secret.id = '123'
+        self.secret.id = utils.generate_test_uuid(tail_value=1)
+
+        # Set up mocked secret repo
         self.secret_repo = mock.MagicMock()
         self.secret_repo.create_from.return_value = self.secret
+        self.setup_secret_repository_mock(self.secret_repo)
 
+        # Set up mocked project-secret repo
         self.project_secret_repo = mock.MagicMock()
         self.project_secret_repo.create_from.return_value = None
+        self.setup_project_secret_repository_mock(self.project_secret_repo)
 
+        # Set up mocked encrypted datum repo
         self.datum_repo = mock.MagicMock()
         self.datum_repo.create_from.return_value = None
+        self.setup_encrypted_datum_repository_mock(self.datum_repo)
 
+        # Set up mocked kek datum
         self.kek_datum = models.KEKDatum()
         self.kek_datum.kek_label = "kek_label"
         self.kek_datum.bind_completed = False
@@ -254,233 +252,26 @@ class BaseSecretsResource(FunctionalTest):
         self.kek_datum.mode = ''
         self.kek_datum.plugin_meta = ''
 
+        # Set up mocked kek datum repo
         self.kek_repo = mock.MagicMock()
         self.kek_repo.find_or_create_kek_datum.return_value = self.kek_datum
+        self.setup_kek_datum_repository_mock(self.kek_repo)
 
-        self.secret_meta_repo = mock.MagicMock()
+        # Set up mocked secret meta repo
+        self.setup_secret_meta_repository_mock()
 
+        # Set up mocked transport key
         self.transport_key = models.TransportKey(
             'default_plugin_name', 'XXXABCDEF')
         self.transport_key_id = 'tkey12345'
         self.tkey_url = hrefs.convert_transport_key_to_href(
             self.transport_key.id)
-        self.transport_key_repo = mock.MagicMock()
+
+        # Set up mocked transport key
+        self.setup_transport_key_repository_mock()
 
 
-class BaseSecretTestSuite(BaseSecretsResource):
-
-    @mock.patch('barbican.plugin.resources.store_secret')
-    def test_should_add_new_secret_with_expiration(self, mock_store_secret):
-        mock_store_secret.return_value = self.secret, None
-
-        expiration = '2114-02-28 12:14:44.180394-05:00'
-        self.secret_req.update({'expiration': expiration})
-
-        resp = self.app.post_json(
-            '/secrets/',
-            self.secret_req
-        )
-
-        self.assertEqual(resp.status_int, 201)
-
-        # Validation replaces the time.
-        expected = dict(self.secret_req)
-        expiration_raw = expected['expiration']
-        expiration_raw = expiration_raw[:-6].replace('12', '17', 1)
-        expiration_tz = timeutils.parse_isotime(expiration_raw.strip())
-        expected['expiration'] = timeutils.normalize_time(expiration_tz)
-        mock_store_secret.assert_called_once_with(
-            self.secret_req.get('payload'),
-            self.secret_req.get('payload_content_type',
-                                'application/octet-stream'),
-            self.secret_req.get('payload_content_encoding'),
-            expected,
-            None,
-            self.project,
-            mock.ANY,
-            transport_key_needed=False,
-            transport_key_id=None
-        )
-
-    @mock.patch('barbican.plugin.resources.store_secret')
-    def test_should_add_new_secret_one_step(self, mock_store_secret,
-                                            check_project_id=True):
-        """Test the one-step secret creation.
-
-        :param check_project_id: True if the retrieved Project id needs to be
-                                 verified, False to skip this check (necessary
-                                 for new-Project flows).
-        """
-        mock_store_secret.return_value = self.secret, None
-
-        resp = self.app.post_json(
-            '/secrets/',
-            self.secret_req
-        )
-        self.assertEqual(resp.status_int, 201)
-
-        expected = dict(self.secret_req)
-        expected['expiration'] = None
-        mock_store_secret.assert_called_once_with(
-            self.secret_req.get('payload'),
-            self.secret_req.get('payload_content_type',
-                                'application/octet-stream'),
-            self.secret_req.get('payload_content_encoding'),
-            expected,
-            None,
-            self.project if check_project_id else mock.ANY,
-            mock.ANY,
-            transport_key_needed=False,
-            transport_key_id=None
-        )
-
-    @mock.patch('barbican.plugin.resources.store_secret')
-    def test_should_add_new_secret_one_step_with_tkey_id(
-            self, mock_store_secret, check_project_id=True):
-        """Test the one-step secret creation with transport_key_id set
-
-        :param check_project_id: True if the retrieved Project id needs to be
-                                 verified, False to skip this check (necessary
-                                 for new-Project flows).
-        """
-        mock_store_secret.return_value = self.secret, None
-        self.secret_req['transport_key_id'] = self.transport_key_id
-
-        resp = self.app.post_json('/secrets/', self.secret_req)
-        self.assertEqual(resp.status_int, 201)
-
-        expected = dict(self.secret_req)
-        expected['expiration'] = None
-        mock_store_secret.assert_called_once_with(
-            self.secret_req.get('payload'),
-            self.secret_req.get('payload_content_type',
-                                'application/octet-stream'),
-            self.secret_req.get('payload_content_encoding'),
-            expected,
-            None,
-            self.project if check_project_id else mock.ANY,
-            mock.ANY,
-            transport_key_needed=False,
-            transport_key_id=self.transport_key_id
-        )
-
-    def test_should_add_new_secret_if_project_does_not_exist(self):
-        self.project_repo.get.return_value = None
-        self.project_repo.find_by_external_project_id.return_value = None
-
-        self.test_should_add_new_secret_one_step(check_project_id=False)
-
-        args, kwargs = self.project_repo.create_from.call_args
-        project = args[0]
-        self.assertIsInstance(project, models.Project)
-        self.assertEqual(self.external_project_id, project.external_id)
-
-    def test_should_add_new_secret_metadata_without_payload(self):
-        self.app.post_json(
-            '/secrets/',
-            {'name': self.name}
-        )
-
-        args, kwargs = self.secret_repo.create_from.call_args
-        secret = args[0]
-        self.assertIsInstance(secret, models.Secret)
-        self.assertEqual(secret.name, self.name)
-
-        args, kwargs = self.project_secret_repo.create_from.call_args
-        project_secret = args[0]
-        self.assertIsInstance(project_secret, models.ProjectSecret)
-        self.assertEqual(project_secret.project_id, self.project_entity_id)
-        self.assertEqual(project_secret.secret_id, secret.id)
-
-        self.assertFalse(self.datum_repo.create_from.called)
-
-    @mock.patch('barbican.plugin.resources.store_secret')
-    def test_should_add_new_secret_metadata_with_tkey(self, mock_store_secret):
-
-        mock_store_secret.return_value = self.secret, self.transport_key
-        resp = self.app.post_json(
-            '/secrets/',
-            {'name': self.name,
-             'transport_key_needed': 'true'}
-        )
-
-        self.assertTrue('secret_ref' in resp.json)
-        self.assertTrue('transport_key_ref' in resp.json)
-        self.assertEqual(resp.json['transport_key_ref'], self.tkey_url)
-
-    @mock.patch('barbican.plugin.resources.store_secret')
-    def test_should_add_secret_payload_almost_too_large(self,
-                                                        mock_store_secret):
-        mock_store_secret.return_value = self.secret, None
-
-        if validators.DEFAULT_MAX_SECRET_BYTES % 4:
-            raise ValueError('Tests currently require max secrets divides by '
-                             '4 evenly, due to base64 encoding.')
-
-        big_text = ''.join(['A' for x
-                            in moves.range(
-                                validators.DEFAULT_MAX_SECRET_BYTES - 8)
-                            ])
-
-        self.secret_req = {'name': self.name,
-                           'algorithm': self.secret_algorithm,
-                           'bit_length': self.secret_bit_length,
-                           'mode': self.secret_mode,
-                           'payload': big_text,
-                           'payload_content_type': self.payload_content_type}
-
-        payload_encoding = self.payload_content_encoding
-        if payload_encoding:
-            self.secret_req['payload_content_encoding'] = payload_encoding
-        self.app.post_json('/secrets/', self.secret_req)
-
-    def test_should_raise_due_to_payload_too_large(self):
-        big_text = ''.join(['A' for x
-                            in moves.range(
-                                validators.DEFAULT_MAX_SECRET_BYTES + 10)
-                            ])
-
-        self.secret_req = {'name': self.name,
-                           'algorithm': self.secret_algorithm,
-                           'bit_length': self.secret_bit_length,
-                           'mode': self.secret_mode,
-                           'payload': big_text,
-                           'payload_content_type': self.payload_content_type}
-
-        payload_encoding = self.payload_content_encoding
-        if payload_encoding:
-            self.secret_req['payload_content_encoding'] = payload_encoding
-
-        resp = self.app.post_json(
-            '/secrets/',
-            self.secret_req,
-            expect_errors=True
-        )
-        self.assertEqual(resp.status_int, 413)
-
-    def test_should_raise_due_to_empty_payload(self):
-        self.secret_req = {'name': self.name,
-                           'algorithm': self.secret_algorithm,
-                           'bit_length': self.secret_bit_length,
-                           'mode': self.secret_mode,
-                           'payload': ''}
-
-        payload_type = self.payload_content_type
-        payload_encoding = self.payload_content_encoding
-        if payload_type:
-            self.secret_req['payload_content_type'] = payload_type
-        if payload_encoding:
-            self.secret_req['payload_content_encoding'] = payload_encoding
-
-        resp = self.app.post_json(
-            '/secrets/',
-            self.secret_req,
-            expect_errors=True
-        )
-        self.assertEqual(resp.status_int, 400)
-
-
-class WhenCreatingPlainTextSecretsUsingSecretsResource(BaseSecretTestSuite):
+class WhenCreatingPlainTextSecretsUsingSecretsResource(BaseSecretsResource):
 
     def test_should_raise_due_to_unsupported_payload_content_type(self):
         self.secret_req = {'name': self.name,
@@ -498,7 +289,7 @@ class WhenCreatingPlainTextSecretsUsingSecretsResource(BaseSecretTestSuite):
         self.assertEqual(resp.status_int, 400)
 
 
-class WhenCreatingBinarySecretsUsingSecretsResource(BaseSecretTestSuite):
+class WhenCreatingBinarySecretsUsingSecretsResource(BaseSecretsResource):
 
     @property
     def root(self):
@@ -589,11 +380,7 @@ class WhenGettingSecretsListUsingSecretsResource(FunctionalTest):
         self._init()
 
         class RootController(object):
-            secrets = controllers.secrets.SecretsController(
-                self.project_repo, self.secret_repo,
-                self.project_secret_repo, self.datum_repo, self.kek_repo,
-                self.secret_meta_repo, self.transport_key_repo
-            )
+            secrets = controllers.secrets.SecretsController()
 
         return RootController()
 
@@ -609,6 +396,7 @@ class WhenGettingSecretsListUsingSecretsResource(FunctionalTest):
         self.offset = 2
         self.limit = 2
 
+        # Set up mocked secrets list
         secret_params = {'name': self.name,
                          'algorithm': self.secret_algorithm,
                          'bit_length': self.secret_bit_length,
@@ -620,23 +408,35 @@ class WhenGettingSecretsListUsingSecretsResource(FunctionalTest):
                         id in moves.range(self.num_secrets)]
         self.total = len(self.secrets)
 
+        # Set up mocked secret repo
         self.secret_repo = mock.MagicMock()
         self.secret_repo.get_by_create_date.return_value = (self.secrets,
                                                             self.offset,
                                                             self.limit,
                                                             self.total)
+        self.setup_secret_repository_mock(self.secret_repo)
 
-        self.project_repo = mock.MagicMock()
+        # Set up mocked project repo
+        self.setup_project_repository_mock()
 
+        # Set up mocked project-secret repo
         self.project_secret_repo = mock.MagicMock()
         self.project_secret_repo.create_from.return_value = None
+        self.setup_project_secret_repository_mock(self.project_secret_repo)
 
+        # Set up mocked encrypted datum repo
         self.datum_repo = mock.MagicMock()
         self.datum_repo.create_from.return_value = None
+        self.setup_encrypted_datum_repository_mock(self.datum_repo)
 
-        self.kek_repo = mock.MagicMock()
+        # Set up mocked kek datum repo
+        self.setup_kek_datum_repository_mock()
 
-        self.secret_meta_repo = mock.MagicMock()
+        # Set up mocked secret meta repo
+        self.setup_secret_meta_repository_mock()
+
+        # Set up mocked transport key repo
+        self.setup_transport_key_repository_mock()
 
         self.params = {'offset': self.offset,
                        'limit': self.limit,
@@ -644,7 +444,6 @@ class WhenGettingSecretsListUsingSecretsResource(FunctionalTest):
                        'alg': None,
                        'bits': 0,
                        'mode': None}
-        self.transport_key_repo = mock.MagicMock()
 
     def test_should_list_secrets_by_name(self):
         # Quote the name parameter to simulate how it would be
@@ -782,11 +581,7 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
         self._init()
 
         class RootController(object):
-            secrets = controllers.secrets.SecretsController(
-                self.project_repo, self.secret_repo,
-                self.project_secret_repo, self.datum_repo, self.kek_repo,
-                self.secret_meta_repo, self.transport_key_repo
-            )
+            secrets = controllers.secrets.SecretsController()
 
         return RootController()
 
@@ -825,32 +620,49 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
                                     encrypted_datum=self.datum,
                                     content_type=self.datum.content_type)
 
+        # Set up mocked project
         self.project = models.Project()
         self.project.id = self.project_id
         self.project.external_id = self.external_project_id
+
+        # Set up mocked project repo
         self.project_repo = mock.MagicMock()
         self.project_repo.get.return_value = self.project
         self.project_repo.find_by_external_project_id.return_value = (
             self.project)
+        self.setup_project_repository_mock(self.project_repo)
 
-        self.secret_repo = mock.MagicMock()
-        self.secret_repo.get.return_value = self.secret
-        self.secret_repo.delete_entity_by_id.return_value = None
+        # Set up mocked secret repo
+        self.secret_repo = mock.Mock()
+        self.secret_repo.get = mock.Mock(return_value=self.secret)
+        self.secret_repo.delete_entity_by_id = mock.Mock(return_value=None)
+        self.setup_secret_repository_mock(self.secret_repo)
 
-        self.project_secret_repo = mock.MagicMock()
+        # Set up mocked project-secret repo
+        self.setup_project_secret_repository_mock()
 
+        # Set up mocked encrypted datum repo
         self.datum_repo = mock.MagicMock()
         self.datum_repo.create_from.return_value = None
+        self.setup_encrypted_datum_repository_mock(self.datum_repo)
 
-        self.kek_repo = mock.MagicMock()
+        # Set up mocked kek datum repo
+        self.setup_kek_datum_repository_mock()
 
+        # Set up mocked secret meta repo
         self.secret_meta_repo = mock.MagicMock()
         self.secret_meta_repo.get_metadata_for_secret.return_value = None
+        self.setup_secret_meta_repository_mock(self.secret_meta_repo)
 
+        # Set up mocked transport key
         self.transport_key_model = models.TransportKey(
             "default_plugin", "my transport key")
+
+        # Set up mocked transport key repo
         self.transport_key_repo = mock.MagicMock()
         self.transport_key_repo.get.return_value = self.transport_key_model
+        self.setup_transport_key_repository_mock(self.transport_key_repo)
+
         self.transport_key_id = 'tkey12345'
 
     @mock.patch('barbican.plugin.resources.get_transport_key_id_for_retrieval')
@@ -872,13 +684,15 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
                       resp.namespace['content_types'].itervalues())
         self.assertNotIn('mime_type', resp.namespace)
 
+    @testcase.attr('deprecated')
     @mock.patch('barbican.plugin.resources.get_secret')
-    def test_should_get_secret_as_plain(self, mock_get_secret):
+    def test_should_get_secret_as_plain_based_on_content_type(self,
+                                                              mock_get_secret):
         data = 'unencrypted_data'
         mock_get_secret.return_value = data
 
         resp = self.app.get(
-            '/secrets/{0}/'.format(self.secret.id),
+            '/secrets/{0}/payload/'.format(self.secret.id),
             headers={'Accept': 'text/plain'}
         )
 
@@ -893,7 +707,31 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
             'text/plain',
             self.secret,
             self.project,
-            mock.ANY,
+            None,
+            None
+        )
+
+    @mock.patch('barbican.plugin.resources.get_secret')
+    def test_should_get_secret_as_plain(self, mock_get_secret):
+        data = 'unencrypted_data'
+        mock_get_secret.return_value = data
+
+        resp = self.app.get(
+            '/secrets/{0}/payload/'.format(self.secret.id),
+            headers={'Accept': 'text/plain'}
+        )
+
+        self.secret_repo.get.assert_called_once_with(
+            entity_id=self.secret.id,
+            external_project_id=self.external_project_id,
+            suppress_exception=True)
+        self.assertEqual(resp.status_int, 200)
+
+        self.assertEqual(resp.body, data)
+        mock_get_secret.assert_called_once_with(
+            'text/plain',
+            self.secret,
+            self.project,
             None,
             None
         )
@@ -905,7 +743,8 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
 
         twsk = "trans_wrapped_session_key"
         resp = self.app.get(
-            '/secrets/{0}/?trans_wrapped_session_key={1}&transport_key_id={2}'
+            ('/secrets/{0}/payload/'
+             '?trans_wrapped_session_key={1}&transport_key_id={2}')
             .format(self.secret.id, twsk, self.transport_key_id),
             headers={'Accept': 'text/plain'}
         )
@@ -921,7 +760,36 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
             'text/plain',
             self.secret,
             self.project,
-            mock.ANY,
+            twsk,
+            self.transport_key_model.transport_key
+        )
+
+    @testcase.attr('deprecated')
+    @mock.patch('barbican.plugin.resources.get_secret')
+    def test_should_get_secret_as_plain_with_twsk_based_on_content_type(
+            self, mock_get_secret):
+        data = 'encrypted_data'
+        mock_get_secret.return_value = data
+
+        twsk = "trans_wrapped_session_key"
+        resp = self.app.get(
+            ('/secrets/{0}/'
+             '?trans_wrapped_session_key={1}&transport_key_id={2}')
+            .format(self.secret.id, twsk, self.transport_key_id),
+            headers={'Accept': 'text/plain'}
+        )
+
+        self.secret_repo.get.assert_called_once_with(
+            entity_id=self.secret.id,
+            external_project_id=self.external_project_id,
+            suppress_exception=True)
+        self.assertEqual(resp.status_int, 200)
+
+        self.assertEqual(resp.body, data)
+        mock_get_secret.assert_called_once_with(
+            'text/plain',
+            self.secret,
+            self.project,
             twsk,
             self.transport_key_model.transport_key
         )
@@ -934,7 +802,28 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
 
         twsk = "trans_wrapped_session_key"
         resp = self.app.get(
-            '/secrets/{0}/?trans_wrapped_session_key={1}'.format(
+            '/secrets/{0}/payload/?trans_wrapped_session_key={1}'.format(
+                self.secret.id, twsk),
+            headers={'Accept': 'text/plain'},
+            expect_errors=True
+        )
+
+        self.secret_repo.get.assert_called_once_with(
+            entity_id=self.secret.id,
+            external_project_id=self.external_project_id,
+            suppress_exception=True)
+        self.assertEqual(resp.status_int, 400)
+
+    @testcase.attr('deprecated')
+    @mock.patch('barbican.plugin.resources.get_secret')
+    def test_should_throw_exception_for_get_when_twsk_but_no_tkey_id_old_way(
+            self, mock_get_secret):
+        data = 'encrypted_data'
+        mock_get_secret.return_value = data
+
+        twsk = "trans_wrapped_session_key"
+        resp = self.app.get(
+            '/secrets/{0}/payload/?trans_wrapped_session_key={1}'.format(
                 self.secret.id, twsk),
             headers={'Accept': 'text/plain'},
             expect_errors=True
@@ -1015,6 +904,34 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
         self.datum.cypher_text = 'aaaa'
 
         resp = self.app.get(
+            '/secrets/{0}/payload/'.format(self.secret.id),
+            headers={
+                'Accept': 'application/octet-stream',
+                'Accept-Encoding': 'gzip'
+            }
+        )
+
+        self.assertEqual(resp.body, data)
+
+        mock_get_secret.assert_called_once_with(
+            'application/octet-stream',
+            self.secret,
+            self.project,
+            None,
+            None
+        )
+
+    @testcase.attr('deprecated')
+    @mock.patch('barbican.plugin.resources.get_secret')
+    def test_should_get_secret_as_binary_based_on_content_type(
+            self, mock_get_secret):
+        data = 'unencrypted_data'
+        mock_get_secret.return_value = data
+
+        self.datum.content_type = "application/octet-stream"
+        self.datum.cypher_text = 'aaaa'
+
+        resp = self.app.get(
             '/secrets/{0}/'.format(self.secret.id),
             headers={
                 'Accept': 'application/octet-stream',
@@ -1028,13 +945,12 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
             'application/octet-stream',
             self.secret,
             self.project,
-            mock.ANY,
             None,
             None
         )
 
     def test_should_throw_exception_for_get_when_secret_not_found(self):
-        self.secret_repo.get.return_value = None
+        self.secret_repo.get = mock.Mock(return_value=None)
 
         resp = self.app.get(
             '/secrets/{0}/'.format(self.secret.id),
@@ -1045,7 +961,17 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
 
     def test_should_throw_exception_for_get_when_accept_not_supported(self):
         resp = self.app.get(
-            '/secrets/{0}/'.format(self.secret.id),
+            '/secrets/{0}/payload/'.format(self.secret.id),
+            headers={'Accept': 'bogusaccept', 'Accept-Encoding': 'gzip'},
+            expect_errors=True
+        )
+        self.assertEqual(resp.status_int, 406)
+
+    @testcase.attr('deprecated')
+    def test_should_throw_exception_for_get_when_accept_not_supported_old_way(
+            self):
+        resp = self.app.get(
+            '/secrets/{0}/payload/'.format(self.secret.id),
             headers={'Accept': 'bogusaccept', 'Accept-Encoding': 'gzip'},
             expect_errors=True
         )
@@ -1069,7 +995,6 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
             self.secret.to_dict_fields(),
             self.secret,
             self.project,
-            mock.ANY,
             transport_key_id=None
         )
 
@@ -1092,7 +1017,6 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
             self.secret.to_dict_fields(),
             self.secret,
             self.project,
-            mock.ANY,
             transport_key_id=self.transport_key_id
         )
 
@@ -1118,7 +1042,6 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
             self.secret.to_dict_fields(),
             self.secret,
             self.project,
-            mock.ANY,
             transport_key_id=None
         )
 
@@ -1145,7 +1068,6 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
             self.secret.to_dict_fields(),
             self.secret,
             self.project,
-            mock.ANY,
             transport_key_id=self.transport_key_id
         )
 
@@ -1171,7 +1093,6 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
             'base64', self.secret.to_dict_fields(),
             self.secret,
             self.project,
-            mock.ANY,
             transport_key_id=None
         )
 
@@ -1288,19 +1209,19 @@ class WhenGettingPuttingOrDeletingSecretUsingSecretResource(FunctionalTest):
         )
 
         mock_delete_secret.assert_called_once_with(self.secret,
-                                                   self.external_project_id,
-                                                   mock.ANY)
+                                                   self.external_project_id)
 
     @mock.patch('barbican.plugin.resources.delete_secret')
-    def test_should_delete_with_accept_header_application_json(self, mocked):
+    def test_should_delete_with_accept_header_application_json(
+            self, mock_delete_secret):
         """Covers Launchpad Bug: 1326481."""
         self.app.delete(
             '/secrets/{0}/'.format(self.secret.id),
             headers={'Accept': 'application/json'}
         )
 
-        mocked.assert_called_once_with(self.secret, self.external_project_id,
-                                       mock.ANY)
+        mock_delete_secret.assert_called_once_with(self.secret,
+                                                   self.external_project_id)
 
     def test_should_throw_exception_for_delete_when_secret_not_found(self):
         self.secret_repo.get.return_value = None
@@ -1333,8 +1254,34 @@ class WhenPerformingUnallowedOperationsOnSecrets(BaseSecretsResource):
 
         self.assertEqual(resp.status_int, 405)
 
+    def test_should_only_allow_get_for_secret_payload_uri(self):
+        resp = self.app.post(
+            '/secrets/{0}/payload/'.format(self.secret.id),
+            'plain text',
+            headers={'Accept': 'text/plain'},
+            expect_errors=True
+        )
+        self.assertEqual(resp.status_int, 405)
+
+        resp = self.app.put(
+            '/secrets/{0}/payload/'.format(self.secret.id),
+            'plain text',
+            headers={'Accept': 'text/plain'},
+            expect_errors=True
+        )
+        self.assertEqual(resp.status_int, 405)
+
+        resp = self.app.delete(
+            '/secrets/{0}/payload/'.format(self.secret.id),
+            'plain text',
+            headers={'Accept': 'text/plain'},
+            expect_errors=True
+        )
+        self.assertEqual(resp.status_int, 405)
+
 
 class WhenCreatingOrdersUsingOrdersResource(FunctionalTest):
+
     def setUp(self):
         super(
             WhenCreatingOrdersUsingOrdersResource, self
@@ -1342,14 +1289,15 @@ class WhenCreatingOrdersUsingOrdersResource(FunctionalTest):
         self.app = webtest.TestApp(app.build_wsgi_app(self.root))
         self.app.extra_environ = get_barbican_env(self.external_project_id)
 
+        database_utils.setup_in_memory_db()
+        self.addCleanup(database_utils.in_memory_cleanup)
+
     @property
     def root(self):
         self._init()
 
         class RootController(object):
-            orders = controllers.orders.OrdersController(self.project_repo,
-                                                         self.order_repo,
-                                                         self.queue_resource)
+            orders = controllers.orders.OrdersController(self.queue_resource)
 
         return RootController()
 
@@ -1372,6 +1320,9 @@ class WhenCreatingOrdersUsingOrdersResource(FunctionalTest):
 
         self.order_repo = mock.MagicMock()
         self.order_repo.create_from.return_value = None
+
+        self.setup_order_repository_mock(self.order_repo)
+        self.setup_project_repository_mock(self.project_repo)
 
         self.queue_resource = mock.MagicMock()
         self.queue_resource.process_order.return_value = None
@@ -1492,14 +1443,15 @@ class WhenGettingOrdersListUsingOrdersResource(FunctionalTest):
         self.app = webtest.TestApp(app.build_wsgi_app(self.root))
         self.app.extra_environ = get_barbican_env(self.external_project_id)
 
+        database_utils.setup_in_memory_db()
+        self.addCleanup(database_utils.in_memory_cleanup)
+
     @property
     def root(self):
         self._init()
 
         class RootController(object):
-            orders = controllers.orders.OrdersController(self.project_repo,
-                                                         self.order_repo,
-                                                         self.queue_resource)
+            orders = controllers.orders.OrdersController(self.queue_resource)
 
         return RootController()
 
@@ -1532,7 +1484,9 @@ class WhenGettingOrdersListUsingOrdersResource(FunctionalTest):
                                                            self.offset,
                                                            self.limit,
                                                            self.total)
-        self.project_repo = mock.MagicMock()
+
+        self.setup_order_repository_mock(self.order_repo)
+        self.setup_project_repository_mock()
 
         self.queue_resource = mock.MagicMock()
         self.queue_resource.process_order.return_value = None
@@ -1607,14 +1561,15 @@ class WhenGettingOrDeletingOrderUsingOrderResource(FunctionalTest):
         self.app = webtest.TestApp(app.build_wsgi_app(self.root))
         self.app.extra_environ = get_barbican_env(self.external_project_id)
 
+        database_utils.setup_in_memory_db()
+        self.addCleanup(database_utils.in_memory_cleanup)
+
     @property
     def root(self):
         self._init()
 
         class RootController(object):
-            orders = controllers.orders.OrdersController(self.project_repo,
-                                                         self.order_repo,
-                                                         self.queue_resource)
+            orders = controllers.orders.OrdersController(self.queue_resource)
 
         return RootController()
 
@@ -1633,7 +1588,9 @@ class WhenGettingOrDeletingOrderUsingOrderResource(FunctionalTest):
         self.order_repo.save.return_value = None
         self.order_repo.delete_entity_by_id.return_value = None
 
-        self.project_repo = mock.MagicMock()
+        self.setup_order_repository_mock(self.order_repo)
+        self.setup_project_repository_mock()
+
         self.queue_resource = mock.MagicMock()
 
     def test_should_get_order(self):
@@ -1670,6 +1627,7 @@ class WhenGettingOrDeletingOrderUsingOrderResource(FunctionalTest):
 
 
 class WhenPuttingOrderWithMetadataUsingOrderResource(FunctionalTest):
+
     def setUp(self):
         super(
             WhenPuttingOrderWithMetadataUsingOrderResource, self
@@ -1677,14 +1635,15 @@ class WhenPuttingOrderWithMetadataUsingOrderResource(FunctionalTest):
         self.app = webtest.TestApp(app.build_wsgi_app(self.root))
         self.app.extra_environ = get_barbican_env(self.external_project_id)
 
+        database_utils.setup_in_memory_db()
+        self.addCleanup(database_utils.in_memory_cleanup)
+
     @property
     def root(self):
         self._init()
 
         class RootController(object):
-            orders = controllers.orders.OrdersController(self.project_repo,
-                                                         self.order_repo,
-                                                         self.queue_resource)
+            orders = controllers.orders.OrdersController(self.queue_resource)
 
         return RootController()
 
@@ -1709,7 +1668,9 @@ class WhenPuttingOrderWithMetadataUsingOrderResource(FunctionalTest):
 
         self.params = {'type': self.type, 'meta': self.meta}
 
-        self.project_repo = mock.MagicMock()
+        self.setup_order_repository_mock(self.order_repo)
+        self.setup_project_repository_mock()
+
         self.queue_resource = mock.MagicMock()
 
     def test_should_put_order(self):
@@ -1774,6 +1735,7 @@ class WhenPuttingOrderWithMetadataUsingOrderResource(FunctionalTest):
 
 
 class WhenCreatingTypeOrdersUsingOrdersResource(FunctionalTest):
+
     def setUp(self):
         super(
             WhenCreatingTypeOrdersUsingOrdersResource, self
@@ -1781,14 +1743,15 @@ class WhenCreatingTypeOrdersUsingOrdersResource(FunctionalTest):
         self.app = webtest.TestApp(app.build_wsgi_app(self.root))
         self.app.extra_environ = get_barbican_env(self.external_project_id)
 
+        database_utils.setup_in_memory_db()
+        self.addCleanup(database_utils.in_memory_cleanup)
+
     @property
     def root(self):
         self._init()
 
         class RootController(object):
-            orders = controllers.orders.OrdersController(self.project_repo,
-                                                         self.order_repo,
-                                                         self.queue_resource)
+            orders = controllers.orders.OrdersController(self.queue_resource)
 
         return RootController()
 
@@ -1816,6 +1779,9 @@ class WhenCreatingTypeOrdersUsingOrdersResource(FunctionalTest):
 
         self.order_repo = mock.MagicMock()
         self.order_repo.create_from.return_value = None
+
+        self.setup_order_repository_mock(self.order_repo)
+        self.setup_project_repository_mock(self.project_repo)
 
         self.queue_resource = mock.MagicMock()
         self.queue_resource.process_type_order.return_value = None
@@ -1849,6 +1815,7 @@ class WhenCreatingTypeOrdersUsingOrdersResource(FunctionalTest):
 
 
 class WhenPerformingUnallowedOperationsOnOrders(FunctionalTest):
+
     def setUp(self):
         super(
             WhenPerformingUnallowedOperationsOnOrders, self
@@ -1856,14 +1823,15 @@ class WhenPerformingUnallowedOperationsOnOrders(FunctionalTest):
         self.app = webtest.TestApp(app.build_wsgi_app(self.root))
         self.app.extra_environ = get_barbican_env(self.external_project_id)
 
+        database_utils.setup_in_memory_db()
+        self.addCleanup(database_utils.in_memory_cleanup)
+
     @property
     def root(self):
         self._init()
 
         class RootController(object):
-            orders = controllers.orders.OrdersController(self.project_repo,
-                                                         self.order_repo,
-                                                         self.queue_resource)
+            orders = controllers.orders.OrdersController(self.queue_resource)
 
         return RootController()
 
@@ -1880,6 +1848,10 @@ class WhenPerformingUnallowedOperationsOnOrders(FunctionalTest):
 
         self.order_repo = mock.MagicMock()
         self.order_repo.create_from.return_value = None
+
+        self.setup_order_repository_mock(self.order_repo)
+        self.setup_project_repository_mock(self.project_repo)
+
         self.queue_resource = mock.MagicMock()
 
         self.type = 'key'
@@ -2001,6 +1973,7 @@ class TestingJsonSanitization(utils.BaseTestCase):
 
 
 class WhenCreatingContainersUsingContainersResource(FunctionalTest):
+
     def setUp(self):
         super(
             WhenCreatingContainersUsingContainersResource, self
@@ -2013,10 +1986,7 @@ class WhenCreatingContainersUsingContainersResource(FunctionalTest):
         self._init()
 
         class RootController(object):
-            containers = controllers.containers.ContainersController(
-                self.project_repo, self.container_repo, self.secret_repo,
-                self.consumer_repo
-            )
+            containers = controllers.containers.ContainersController()
 
         return RootController()
 
@@ -2026,36 +1996,45 @@ class WhenCreatingContainersUsingContainersResource(FunctionalTest):
         self.secret_refs = [
             {
                 'name': 'test secret 1',
-                'secret_ref': '1231'
+                'secret_ref': 'http://localhost:9311/1231'
             },
             {
                 'name': 'test secret 2',
-                'secret_ref': '1232'
+                'secret_ref': 'http://localhost:9311/1232'
             },
             {
                 'name': 'test secret 3',
-                'secret_ref': '1233'
+                'secret_ref': 'http://localhost:9311/1233'
             }
         ]
 
         self.project_internal_id = 'projectid1234'
         self.external_project_id = 'keystoneid1234'
 
+        # Set up mocked project
         self.project = models.Project()
         self.project.id = self.project_internal_id
         self.project.external_id = self.external_project_id
 
+        # Set up mocked project repo
         self.project_repo = mock.MagicMock()
         self.project_repo.get.return_value = self.project
+        self.setup_project_repository_mock(self.project_repo)
 
+        # Set up mocked container consumer repo
         self.container_repo = mock.MagicMock()
         self.container_repo.create_from.return_value = None
+        self.setup_container_repository_mock(self.container_repo)
 
+        # Set up mocked secret repo
         self.secret_repo = mock.MagicMock()
         self.secret_repo.create_from.return_value = None
+        self.setup_secret_repository_mock(self.secret_repo)
 
+        # Set up mocked consumer repo
         self.consumer_repo = mock.MagicMock()
         self.consumer_repo.create_from.return_value = None
+        self.setup_container_consumer_repository_mock(self.consumer_repo)
 
         self.container_req = {'name': self.name,
                               'type': self.type,
@@ -2131,6 +2110,7 @@ class WhenCreatingContainersUsingContainersResource(FunctionalTest):
 
 
 class WhenGettingOrDeletingContainerUsingContainerResource(FunctionalTest):
+
     def setUp(self):
         super(
             WhenGettingOrDeletingContainerUsingContainerResource, self
@@ -2143,10 +2123,7 @@ class WhenGettingOrDeletingContainerUsingContainerResource(FunctionalTest):
         self._init()
 
         class RootController(object):
-            containers = controllers.containers.ContainersController(
-                self.project_repo, self.container_repo, self.secret_repo,
-                self.consumer_repo
-            )
+            containers = controllers.containers.ContainersController()
 
         return RootController()
 
@@ -2154,22 +2131,30 @@ class WhenGettingOrDeletingContainerUsingContainerResource(FunctionalTest):
         self.external_project_id = 'keystoneid1234'
         self.project_internal_id = 'projectid1234'
 
+        # Set up mocked project
         self.project = models.Project()
         self.project.id = self.project_internal_id
         self.project.external_id = self.external_project_id
 
+        # Set up mocked project repo
         self.project_repo = mock.MagicMock()
         self.project_repo.get.return_value = self.project
+        self.setup_project_repository_mock(self.project_repo)
 
+        # Set up mocked container
         self.container = create_container(id_ref='id1')
 
+        # Set up mocked container repo
         self.container_repo = mock.MagicMock()
         self.container_repo.get.return_value = self.container
         self.container_repo.delete_entity_by_id.return_value = None
+        self.setup_container_repository_mock(self.container_repo)
 
-        self.secret_repo = mock.MagicMock()
+        # Set up mocked secret repo
+        self.setup_secret_repository_mock()
 
-        self.consumer_repo = mock.MagicMock()
+        # Set up container consumer repo
+        self.setup_container_consumer_repository_mock()
 
     def test_should_get_container(self):
         self.app.get('/containers/{0}/'.format(
@@ -2222,10 +2207,7 @@ class WhenPerformingUnallowedOperationsOnContainers(FunctionalTest):
         self._init()
 
         class RootController(object):
-            containers = controllers.containers.ContainersController(
-                self.project_repo, self.container_repo, self.secret_repo,
-                self.consumer_repo
-            )
+            containers = controllers.containers.ContainersController()
 
         return RootController()
 
@@ -2250,22 +2232,31 @@ class WhenPerformingUnallowedOperationsOnContainers(FunctionalTest):
         self.external_project_id = 'keystoneid1234'
         self.project_internal_id = 'projectid1234'
 
+        # Set up mocked project
         self.project = models.Project()
         self.project.id = self.project_internal_id
         self.project.external_id = self.external_project_id
 
+        # Set up mocked project repo
         self.project_repo = mock.MagicMock()
         self.project_repo.get.return_value = self.project
+        self.setup_project_repository_mock(self.project_repo)
 
+        # Set up mocked container
         self.container = create_container(id_ref='id1')
 
+        # Set up mocked container repo
         self.container_repo = mock.MagicMock()
         self.container_repo.get.return_value = self.container
         self.container_repo.delete_entity_by_id.return_value = None
+        self.setup_container_repository_mock(self.container_repo)
 
-        self.secret_repo = mock.MagicMock()
+        # Set up secret repo
+        self.setup_secret_repository_mock()
 
-        self.consumer_repo = mock.MagicMock()
+        # Set up container consumer repo
+        self.setup_container_consumer_repository_mock()
+
         self.container_req = {'name': self.name,
                               'type': self.type,
                               'secret_refs': self.secret_refs}
@@ -2306,10 +2297,7 @@ class WhenCreatingConsumersUsingConsumersResource(FunctionalTest):
         self._init()
 
         class RootController(object):
-            containers = controllers.containers.ContainersController(
-                self.project_repo, self.container_repo, self.secret_repo,
-                self.consumer_repo
-            )
+            containers = controllers.containers.ContainersController()
 
         return RootController()
 
@@ -2338,23 +2326,34 @@ class WhenCreatingConsumersUsingConsumersResource(FunctionalTest):
 
         self.project_internal_id = 'projectid1234'
         self.external_project_id = 'keystoneid1234'
-        self.container = create_container(id_ref='id1')
 
+        # Set up mocked project
         self.project = models.Project()
         self.project.id = self.project_internal_id
         self.project.external_id = self.external_project_id
 
+        # Set up mocked project repo
         self.project_repo = mock.MagicMock()
         self.project_repo.get.return_value = self.project
+        self.setup_project_repository_mock(self.project_repo)
 
+        # Set up mocked container
+        self.container = create_container(id_ref='id1')
+
+        # Set up mocked container repo
         self.container_repo = mock.MagicMock()
         self.container_repo.get.return_value = self.container
+        self.setup_container_repository_mock(self.container_repo)
 
+        # Set up secret repo
         self.secret_repo = mock.MagicMock()
         self.secret_repo.create_from.return_value = None
+        self.setup_secret_repository_mock(self.secret_repo)
 
+        # Set up container consumer repo
         self.consumer_repo = mock.MagicMock()
         self.consumer_repo.create_from.return_value = None
+        self.setup_container_consumer_repository_mock(self.consumer_repo)
 
         self.container_req = {'name': self.name,
                               'type': self.type,
@@ -2400,6 +2399,7 @@ class WhenCreatingConsumersUsingConsumersResource(FunctionalTest):
 
 
 class WhenGettingOrDeletingConsumersUsingConsumerResource(FunctionalTest):
+
     def setUp(self):
         super(
             WhenGettingOrDeletingConsumersUsingConsumerResource, self
@@ -2412,10 +2412,7 @@ class WhenGettingOrDeletingConsumersUsingConsumerResource(FunctionalTest):
         self._init()
 
         class RootController(object):
-            containers = controllers.containers.ContainersController(
-                self.project_repo, self.container_repo, self.secret_repo,
-                self.consumer_repo
-            )
+            containers = controllers.containers.ContainersController()
 
         return RootController()
 
@@ -2423,16 +2420,20 @@ class WhenGettingOrDeletingConsumersUsingConsumerResource(FunctionalTest):
         self.external_project_id = 'keystoneid1234'
         self.project_internal_id = 'projectid1234'
 
+        # Set up mocked project
         self.project = models.Project()
         self.project.id = self.project_internal_id
         self.project.external_id = self.external_project_id
 
+        # Set up mocked project repo
         self.project_repo = mock.MagicMock()
         self.project_repo.get.return_value = self.project
+        self.setup_project_repository_mock(self.project_repo)
 
-        self.consumer_repo = mock.MagicMock()
-
+        # Set up mocked container
         self.container = create_container(id_ref='id1')
+
+        # Set up mocked consumers
         self.consumer = create_consumer(self.container.id, id_ref='id2')
         self.consumer2 = create_consumer(self.container.id, id_ref='id3')
 
@@ -2441,12 +2442,19 @@ class WhenGettingOrDeletingConsumersUsingConsumerResource(FunctionalTest):
             'URL': self.consumer.URL
         }
 
+        # Set up mocked container repo
         self.container_repo = mock.MagicMock()
         self.container_repo.get.return_value = self.container
+        self.setup_container_repository_mock(self.container_repo)
+
+        # Set up mocked container consumer repo
+        self.consumer_repo = mock.MagicMock()
         self.consumer_repo.get_by_values.return_value = self.consumer
         self.consumer_repo.delete_entity_by_id.return_value = None
+        self.setup_container_consumer_repository_mock(self.consumer_repo)
 
-        self.secret_repo = mock.MagicMock()
+        # Set up mocked secret repo
+        self.setup_secret_repository_mock()
 
     def test_should_get_consumer(self):
         ret_val = ([self.consumer], 0, 0, 1)
@@ -2584,10 +2592,7 @@ class WhenPerformingUnallowedOperationsOnConsumers(FunctionalTest):
         self._init()
 
         class RootController(object):
-            containers = controllers.containers.ContainersController(
-                self.project_repo, self.container_repo, self.secret_repo,
-                self.consumer_repo
-            )
+            containers = controllers.containers.ContainersController()
 
         return RootController()
 
@@ -2616,16 +2621,20 @@ class WhenPerformingUnallowedOperationsOnConsumers(FunctionalTest):
         self.external_project_id = 'keystoneid1234'
         self.project_internal_id = 'projectid1234'
 
+        # Set up mocked project
         self.project = models.Project()
         self.project.id = self.project_internal_id
         self.project.external_id = self.external_project_id
 
+        # Set up mocked project repo
         self.project_repo = mock.MagicMock()
         self.project_repo.get.return_value = self.project
+        self.setup_project_repository_mock(self.project_repo)
 
-        self.consumer_repo = mock.MagicMock()
-
+        # Set up mocked container
         self.container = create_container(id_ref='id1')
+
+        # Set up mocked container consumers
         self.consumer = create_consumer(self.container.id, id_ref='id2')
         self.consumer2 = create_consumer(self.container.id, id_ref='id3')
 
@@ -2634,12 +2643,19 @@ class WhenPerformingUnallowedOperationsOnConsumers(FunctionalTest):
             'URL': self.consumer.URL
         }
 
+        # Set up container repo
         self.container_repo = mock.MagicMock()
         self.container_repo.get.return_value = self.container
+        self.setup_container_repository_mock(self.container_repo)
+
+        # Set up container consumer repo
+        self.consumer_repo = mock.MagicMock()
         self.consumer_repo.get_by_values.return_value = self.consumer
         self.consumer_repo.delete_entity_by_id.return_value = None
+        self.setup_container_consumer_repository_mock(self.consumer_repo)
 
-        self.secret_repo = mock.MagicMock()
+        # Set up secret repo
+        self.setup_secret_repository_mock()
 
     def test_should_not_allow_put_on_consumers(self):
         ret_val = ([self.consumer], 0, 0, 1)
@@ -2695,10 +2711,7 @@ class WhenGettingContainersListUsingResource(FunctionalTest):
         self._init()
 
         class RootController(object):
-            containers = controllers.containers.ContainersController(
-                self.project_repo, self.container_repo, self.secret_repo,
-                self.consumer_repo
-            )
+            containers = controllers.containers.ContainersController()
 
         return RootController()
 
@@ -2713,14 +2726,16 @@ class WhenGettingContainersListUsingResource(FunctionalTest):
         self.containers = [create_container(id_ref='id' + str(id_ref)) for
                            id_ref in moves.range(self.num_containers)]
         self.total = len(self.containers)
+
         self.container_repo = mock.MagicMock()
         self.container_repo.get_by_create_date.return_value = (self.containers,
                                                                self.offset,
                                                                self.limit,
                                                                self.total)
-        self.project_repo = mock.MagicMock()
-        self.secret_repo = mock.MagicMock()
-        self.consumer_repo = mock.MagicMock()
+        self.setup_container_repository_mock(self.container_repo)
+        self.setup_project_repository_mock()
+        self.setup_secret_repository_mock()
+        self.setup_container_consumer_repository_mock()
 
         self.params = {
             'offset': self.offset,

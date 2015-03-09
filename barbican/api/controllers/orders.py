@@ -63,10 +63,9 @@ class OrderController(object):
 
     """Handles Order retrieval and deletion requests."""
 
-    def __init__(self, order, order_repo=None,
-                 queue_resource=None):
+    def __init__(self, order, queue_resource=None):
         self.order = order
-        self.order_repo = order_repo or repo.OrderRepo()
+        self.order_repo = repo.get_order_repository()
         self.queue = queue_resource or async_client.TaskClient()
         self.type_order_validator = validators.TypeOrderValidator()
 
@@ -116,12 +115,10 @@ class OrderController(object):
 class OrdersController(object):
     """Handles Order requests for Secret creation."""
 
-    def __init__(self, project_repo=None, order_repo=None,
-                 queue_resource=None):
+    def __init__(self, queue_resource=None):
 
         LOG.debug('Creating OrdersController')
-        self.project_repo = project_repo or repo.ProjectRepo()
-        self.order_repo = order_repo or repo.OrderRepo()
+        self.order_repo = repo.get_order_repository()
         self.queue = queue_resource or async_client.TaskClient()
         self.type_order_validator = validators.TypeOrderValidator()
 
@@ -185,8 +182,7 @@ class OrdersController(object):
     @controllers.enforce_content_types(['application/json'])
     def on_post(self, external_project_id, **kwargs):
 
-        project = res.get_or_create_project(external_project_id,
-                                            self.project_repo)
+        project = res.get_or_create_project(external_project_id)
 
         body = api.load_body(pecan.request,
                              validator=self.type_order_validator)
@@ -200,11 +196,18 @@ class OrdersController(object):
 
         self.order_repo.create_from(new_order)
 
-        self.queue.process_type_order(order_id=new_order.id,
+        # Grab our id before commit due to obj expiration from sqlalchemy
+        order_id = new_order.id
+
+        # Force commit to avoid async issues with the workers
+        repo.commit()
+
+        self.queue.process_type_order(order_id=order_id,
                                       project_id=external_project_id)
+
+        url = hrefs.convert_order_to_href(order_id)
+
         pecan.response.status = 202
-        pecan.response.headers['Location'] = '/{0}/orders/{1}'.format(
-            external_project_id, new_order.id
-        )
-        url = hrefs.convert_order_to_href(new_order.id)
+        pecan.response.headers['Location'] = url
+
         return {'order_ref': url}

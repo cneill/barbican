@@ -64,21 +64,10 @@ def _request_has_twsk_but_no_transport_key_id():
 class SecretController(object):
     """Handles Secret retrieval and deletion requests."""
 
-    def __init__(self, secret,
-                 project_repo=None, secret_repo=None, datum_repo=None,
-                 kek_repo=None, secret_meta_repo=None,
-                 transport_key_repo=None):
+    def __init__(self, secret):
         LOG.debug('=== Creating SecretController ===')
         self.secret = secret
-
-        # TODO(john-wood-w) Remove passed-in repositories in favor of
-        #  repository factories and patches in unit tests.
-        self.repos = repo.Repositories(project_repo=project_repo,
-                                       secret_repo=secret_repo,
-                                       datum_repo=datum_repo,
-                                       kek_repo=kek_repo,
-                                       secret_meta_repo=secret_meta_repo,
-                                       transport_key_repo=transport_key_repo)
+        self.transport_key_repo = repo.get_transport_key_repository()
 
     @pecan.expose(generic=True)
     def index(self, **kwargs):
@@ -118,8 +107,7 @@ class SecretController(object):
 
     def _on_get_secret_payload(self, secret, external_project_id, **kwargs):
         """GET actual payload containing the secret."""
-        project = res.get_or_create_project(external_project_id,
-                                            self.repos.project_repo)
+        project = res.get_or_create_project(external_project_id)
 
         pecan.override_template('', pecan.request.accept.header_value)
 
@@ -133,7 +121,6 @@ class SecretController(object):
         return plugin.get_secret(pecan.request.accept.header_value,
                                  secret,
                                  project,
-                                 self.repos,
                                  twsk,
                                  transport_key)
 
@@ -141,11 +128,22 @@ class SecretController(object):
         if transport_key_id is None:
             _request_has_twsk_but_no_transport_key_id()
 
-        transport_key_model = self.repos.transport_key_repo.get(
+        transport_key_model = self.transport_key_repo.get(
             entity_id=transport_key_id,
             suppress_exception=True)
 
         return transport_key_model.transport_key
+
+    @pecan.expose()
+    @allow_all_content_types
+    @controllers.handle_exceptions(u._('Secret payload retrieval'))
+    @controllers.enforce_rbac('secret:decrypt')
+    def payload(self, external_project_id, **kwargs):
+        if pecan.request.method != 'GET':
+            pecan.abort(405)
+        return self._on_get_secret_payload(self.secret,
+                                           external_project_id,
+                                           **kwargs)
 
     @index.when(method='PUT')
     @allow_all_content_types
@@ -174,14 +172,13 @@ class SecretController(object):
         if self.secret.encrypted_data:
             _secret_already_has_data()
 
-        project_model = res.get_or_create_project(external_project_id,
-                                                  self.repos.project_repo)
+        project_model = res.get_or_create_project(external_project_id)
         content_type = pecan.request.content_type
         content_encoding = pecan.request.headers.get('Content-Encoding')
 
         plugin.store_secret(payload, content_type,
                             content_encoding, self.secret.to_dict_fields(),
-                            self.secret, project_model, self.repos,
+                            self.secret, project_model,
                             transport_key_id=transport_key_id)
 
     @index.when(method='DELETE')
@@ -189,25 +186,16 @@ class SecretController(object):
     @controllers.handle_exceptions(u._('Secret deletion'))
     @controllers.enforce_rbac('secret:delete')
     def on_delete(self, external_project_id, **kwargs):
-        plugin.delete_secret(self.secret, external_project_id, self.repos)
+        plugin.delete_secret(self.secret, external_project_id)
 
 
 class SecretsController(object):
     """Handles Secret creation requests."""
 
-    def __init__(self,
-                 project_repo=None, secret_repo=None,
-                 project_secret_repo=None, datum_repo=None, kek_repo=None,
-                 secret_meta_repo=None, transport_key_repo=None):
+    def __init__(self):
         LOG.debug('Creating SecretsController')
         self.validator = validators.NewSecretValidator()
-        self.repos = repo.Repositories(project_repo=project_repo,
-                                       project_secret_repo=project_secret_repo,
-                                       secret_repo=secret_repo,
-                                       datum_repo=datum_repo,
-                                       kek_repo=kek_repo,
-                                       secret_meta_repo=secret_meta_repo,
-                                       transport_key_repo=transport_key_repo)
+        self.secret_repo = repo.get_secret_repository()
 
     @pecan.expose()
     def _lookup(self, secret_id, *remainder):
@@ -218,20 +206,14 @@ class SecretsController(object):
         controllers.assert_is_valid_uuid_from_uri(secret_id)
         ctx = controllers._get_barbican_context(pecan.request)
 
-        secret = self.repos.secret_repo.get(
+        secret = self.secret_repo.get(
             entity_id=secret_id,
             external_project_id=ctx.project,
             suppress_exception=True)
         if not secret:
             _secret_not_found()
 
-        return SecretController(secret,
-                                self.repos.project_repo,
-                                self.repos.secret_repo,
-                                self.repos.datum_repo,
-                                self.repos.kek_repo,
-                                self.repos.secret_meta_repo,
-                                self.repos.transport_key_repo), remainder
+        return SecretController(secret), remainder
 
     @pecan.expose(generic=True)
     def index(self, **kwargs):
@@ -259,7 +241,7 @@ class SecretsController(object):
             # the default should be used.
             bits = 0
 
-        result = self.repos.secret_repo.get_by_create_date(
+        result = self.secret_repo.get_by_create_date(
             external_project_id,
             offset_arg=kw.get('offset', 0),
             limit_arg=kw.get('limit', None),
@@ -296,8 +278,7 @@ class SecretsController(object):
         LOG.debug('Start on_post for project-ID %s:...', external_project_id)
 
         data = api.load_body(pecan.request, validator=self.validator)
-        project = res.get_or_create_project(external_project_id,
-                                            self.repos.project_repo)
+        project = res.get_or_create_project(external_project_id)
 
         transport_key_needed = data.get('transport_key_needed',
                                         'false').lower() == 'true'
@@ -308,16 +289,15 @@ class SecretsController(object):
                      'application/octet-stream'),
             data.get('payload_content_encoding'),
             data, None, project,
-            self.repos,
             transport_key_needed=transport_key_needed,
             transport_key_id=data.get('transport_key_id'))
 
-        pecan.response.status = 201
-        pecan.response.headers['Location'] = '/secrets/{0}'.format(
-            new_secret.id
-        )
         url = hrefs.convert_secret_to_href(new_secret.id)
         LOG.debug('URI to secret is %s', url)
+
+        pecan.response.status = 201
+        pecan.response.headers['Location'] = url
+
         if transport_key_model is not None:
             tkey_url = hrefs.convert_transport_key_to_href(
                 transport_key_model.id)

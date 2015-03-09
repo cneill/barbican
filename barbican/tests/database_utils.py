@@ -17,12 +17,30 @@ Supports database/repositories oriented unit testing.
 Warning: Do not merge this content with the utils.py module, as doing so will
 break the DevStack functional test discovery process.
 """
+import oslotest.base as oslotest
 
 from barbican.model import repositories
-from barbican.tests import utils
 
 
-class RepositoryTestCase(utils.BaseTestCase):
+def setup_in_memory_db():
+    # Ensure we are using in-memory SQLite database, and creating tables.
+    repositories.CONF.set_override("sql_connection", "sqlite:///:memory:")
+    repositories.CONF.set_override("db_auto_create", True)
+    repositories.CONF.set_override("debug", False)
+
+    # Ensure the connection is completely closed, so any previous in-memory
+    # database can be removed prior to starting the next test run.
+    repositories.hard_reset()
+
+    # Start the in-memory database, creating required tables.
+    repositories.start()
+
+
+def in_memory_cleanup():
+    repositories.clear()
+
+
+class RepositoryTestCase(oslotest.BaseTestCase):
     """Base test case class for in-memory database unit tests.
 
     Database/Repository oriented unit tests should *not* modify the global
@@ -35,21 +53,7 @@ class RepositoryTestCase(utils.BaseTestCase):
     """
     def setUp(self):
         super(RepositoryTestCase, self).setUp()
-
-        # Ensure we are using in-memory SQLite database, and creating tables.
-        repositories.CONF.set_override("sql_connection", "sqlite:///:memory:")
-        repositories.CONF.set_override("db_auto_create", True)
-        repositories.CONF.set_override("debug", False)
-
-        # Ensure the connection is completely closed, so any previous in-memory
-        # database can be removed prior to starting the next test run.
-        repositories.hard_reset()
-
-        # Start the in-memory database, creating required tables.
-        repositories.start()
+        setup_in_memory_db()
 
         # Clean up once tests are completed.
-        self.addCleanup(self._cleanup)
-
-    def _cleanup(self):
-        repositories.clear()
+        self.addCleanup(in_memory_cleanup)

@@ -14,6 +14,7 @@ API JSON validators.
 """
 
 import abc
+import base64
 
 import jsonschema as schema
 import ldap
@@ -167,6 +168,8 @@ class NewSecretValidator(ValidatorBase):
                                   u._("If 'payload' specified, must be non "
                                       "empty"),
                                   "payload")
+            self._validate_payload_by_content_encoding(content_encoding,
+                                                       payload, schema_name)
             json_data['payload'] = payload
         elif 'payload_content_type' in json_data:
             self._assert_validity(parent_schema is not None, schema_name,
@@ -257,6 +260,20 @@ class NewSecretValidator(ValidatorBase):
             u._("payload_content_type is not one of {supported}").format(
                 supported=mime_types.SUPPORTED),
             "payload_content_type")
+
+    def _validate_payload_by_content_encoding(self, payload_content_encoding,
+                                              payload, schema_name):
+        if payload_content_encoding == 'base64':
+            try:
+                base64.b64decode(payload)
+            except TypeError:
+                LOG.exception("Problem parsing payload")
+                raise exception.InvalidObject(schema=schema_name,
+                                              reason=u._("Invalid payload "
+                                                         "for "
+                                                         "payload_content"
+                                                         "_encoding"),
+                                              property="payload")
 
     def _extract_payload(self, json_data):
         """Extracts and returns the payload from the JSON data.
@@ -602,6 +619,20 @@ class ContainerValidator(ValidatorBase):
             schema_name,
             u._("Duplicate secret ids are not allowed"),
             "secret_refs")
+
+        # Ensure that our secret refs are valid relative to our config, no
+        # spoofing allowed!
+        configured_host_href = CONF.host_href
+        for secret_ref in secret_refs:
+            if configured_host_href not in secret_ref.get('secret_ref'):
+                raise exception.UnsupportedField(
+                    field='secret_ref',
+                    schema=schema_name,
+                    reason=u._(
+                        "Secret_ref does not match the configured hostname, "
+                        "please try again"
+                    )
+                )
 
         if container_type == 'rsa':
             self._validate_rsa(secret_refs_names, schema_name)

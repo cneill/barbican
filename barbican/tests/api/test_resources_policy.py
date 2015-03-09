@@ -97,7 +97,7 @@ class ConsumerResource(TestableResource):
     controller_cls = consumers.ContainerConsumerController
 
 
-class BaseTestCase(utils.BaseTestCase):
+class BaseTestCase(utils.BaseTestCase, utils.MockModelRepositoryMixin):
 
     def setUp(self):
         super(BaseTestCase, self).setUp()
@@ -242,14 +242,16 @@ class WhenTestingSecretsResource(BaseTestCase):
                                             side_effect=self
                                             ._generate_get_error())
         self.secret_repo.get_by_create_date = get_by_create_date
+        self.setup_secret_repository_mock(self.secret_repo)
 
-        self.resource = SecretsResource(project_repo=mock.MagicMock(),
-                                        secret_repo=self.secret_repo,
-                                        project_secret_repo=mock.MagicMock(),
-                                        datum_repo=mock.MagicMock(),
-                                        kek_repo=mock.MagicMock(),
-                                        secret_meta_repo=mock.MagicMock(),
-                                        transport_key_repo=mock.MagicMock())
+        self.setup_encrypted_datum_repository_mock()
+        self.setup_kek_datum_repository_mock()
+        self.setup_project_repository_mock()
+        self.setup_project_secret_repository_mock()
+        self.setup_secret_meta_repository_mock()
+        self.setup_transport_key_repository_mock()
+
+        self.resource = SecretsResource()
 
     def test_rules_should_be_loaded(self):
         self.assertIsNotNone(self.policy_enforcer.rules)
@@ -295,14 +297,15 @@ class WhenTestingSecretResource(BaseTestCase):
                                      side_effect=self._generate_get_error())
         self.secret_repo.get = fail_method
         self.secret_repo.delete_entity_by_id = fail_method
+        self.setup_secret_repository_mock(self.secret_repo)
 
-        self.resource = SecretResource(self.secret_id,
-                                       project_repo=mock.MagicMock(),
-                                       secret_repo=self.secret_repo,
-                                       datum_repo=mock.MagicMock(),
-                                       kek_repo=mock.MagicMock(),
-                                       secret_meta_repo=mock.MagicMock(),
-                                       transport_key_repo=mock.MagicMock())
+        self.setup_encrypted_datum_repository_mock()
+        self.setup_kek_datum_repository_mock()
+        self.setup_project_repository_mock()
+        self.setup_secret_meta_repository_mock()
+        self.setup_transport_key_repository_mock()
+
+        self.resource = SecretResource(self.secret_id)
 
     def test_rules_should_be_loaded(self):
         self.assertIsNotNone(self.policy_enforcer.rules)
@@ -370,9 +373,10 @@ class WhenTestingOrdersResource(BaseTestCase):
                                             ._generate_get_error())
         self.order_repo.get_by_create_date = get_by_create_date
 
-        self.resource = OrdersResource(project_repo=mock.MagicMock(),
-                                       order_repo=self.order_repo,
-                                       queue_resource=mock.MagicMock())
+        self.setup_order_repository_mock(self.order_repo)
+        self.setup_project_repository_mock()
+
+        self.resource = OrdersResource(queue_resource=mock.MagicMock())
 
     def test_rules_should_be_loaded(self):
         self.assertIsNotNone(self.policy_enforcer.rules)
@@ -416,8 +420,9 @@ class WhenTestingOrderResource(BaseTestCase):
         self.order_repo.get = fail_method
         self.order_repo.delete_entity_by_id = fail_method
 
-        self.resource = OrderResource(self.order_id,
-                                      order_repo=self.order_repo)
+        self.setup_order_repository_mock(self.order_repo)
+
+        self.resource = OrderResource(self.order_id)
 
     def test_rules_should_be_loaded(self):
         self.assertIsNotNone(self.policy_enforcer.rules)
@@ -460,10 +465,11 @@ class WhenTestingConsumersResource(BaseTestCase):
                                              ._generate_get_error())
         self.consumer_repo.get_by_container_id = get_by_container_id
 
-        self.resource = ConsumersResource(container_id=self.container_id,
-                                          project_repo=mock.MagicMock(),
-                                          consumer_repo=self.consumer_repo,
-                                          container_repo=mock.MagicMock())
+        self.setup_project_repository_mock()
+        self.setup_container_consumer_repository_mock(self.consumer_repo)
+        self.setup_container_repository_mock()
+
+        self.resource = ConsumersResource(container_id=self.container_id)
 
     def test_rules_should_be_loaded(self):
         self.assertIsNotNone(self.policy_enforcer.rules)
@@ -520,9 +526,9 @@ class WhenTestingConsumerResource(BaseTestCase):
                                      side_effect=self._generate_get_error())
         self.consumer_repo.get = fail_method
 
-        self.resource = ConsumerResource(consumer_id=self.consumer_id,
-                                         project_repo=mock.MagicMock(),
-                                         consumer_repo=self.consumer_repo)
+        self.setup_project_repository_mock()
+        self.setup_container_consumer_repository_mock(self.consumer_repo)
+        self.resource = ConsumerResource(consumer_id=self.consumer_id)
 
     def test_rules_should_be_loaded(self):
         self.assertIsNotNone(self.policy_enforcer.rules)

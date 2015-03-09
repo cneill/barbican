@@ -35,10 +35,9 @@ def _consumer_not_found():
 class ContainerConsumerController(object):
     """Handles Consumer entity retrieval and deletion requests."""
 
-    def __init__(self, consumer_id, project_repo=None, consumer_repo=None):
+    def __init__(self, consumer_id):
         self.consumer_id = consumer_id
-        self.project_repo = project_repo or repo.ProjectRepo()
-        self.consumer_repo = consumer_repo or repo.ContainerConsumerRepo()
+        self.consumer_repo = repo.get_container_consumer_repository()
         self.validator = validators.ContainerConsumerValidator()
 
     @pecan.expose(generic=True)
@@ -66,18 +65,15 @@ class ContainerConsumerController(object):
 class ContainerConsumersController(object):
     """Handles Consumer creation requests."""
 
-    def __init__(self, container_id, project_repo=None, consumer_repo=None,
-                 container_repo=None):
+    def __init__(self, container_id):
         self.container_id = container_id
-        self.project_repo = project_repo or repo.ProjectRepo()
-        self.consumer_repo = consumer_repo or repo.ContainerConsumerRepo()
-        self.container_repo = container_repo or repo.ContainerRepo()
+        self.consumer_repo = repo.get_container_consumer_repository()
+        self.container_repo = repo.get_container_repository()
         self.validator = validators.ContainerConsumerValidator()
 
     @pecan.expose()
     def _lookup(self, consumer_id, *remainder):
-        return ContainerConsumerController(consumer_id, self.project_repo,
-                                           self.consumer_repo), remainder
+        return ContainerConsumerController(consumer_id), remainder
 
     @pecan.expose(generic=True)
     def index(self, **kwargs):
@@ -128,8 +124,7 @@ class ContainerConsumersController(object):
     @controllers.enforce_content_types(['application/json'])
     def on_post(self, external_project_id, **kwargs):
 
-        project = res.get_or_create_project(external_project_id,
-                                            self.project_repo)
+        project = res.get_or_create_project(external_project_id)
         data = api.load_body(pecan.request, validator=self.validator)
         LOG.debug('Start on_post...%s', data)
 
@@ -144,9 +139,8 @@ class ContainerConsumersController(object):
         new_consumer.project_id = project.id
         self.consumer_repo.create_or_update_from(new_consumer, container)
 
-        pecan.response.headers['Location'] = (
-            '/containers/{0}/consumers'.format(new_consumer.container_id)
-        )
+        url = hrefs.convert_consumer_to_href(new_consumer.container_id)
+        pecan.response.headers['Location'] = url
 
         return self._return_container_data(self.container_id,
                                            external_project_id)
