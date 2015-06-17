@@ -22,6 +22,7 @@ from functionaltests.api.v1.behaviors import container_behaviors
 from functionaltests.api.v1.behaviors import secret_behaviors
 from functionaltests.api.v1.models import container_models
 from functionaltests.api.v1.models import secret_models
+from functionaltests.api.v1.functional import security_utils
 
 create_container_data = {
     "name": "containername",
@@ -62,6 +63,8 @@ accepted_str_values = {
     'uuid': ['54262d9d-4bc7-4821-8df0-dc2ca8e112bb'],
     'empty': ['']
 }
+
+fuzzer = security_utils.Fuzzer()
 
 
 class BaseContainerTestCase(base.TestCase):
@@ -444,3 +447,281 @@ class ContainersUnauthedTestCase(BaseContainerTestCase):
             self.dummy_container_ref, use_auth=False, extra_headers=headers
         )
         self.assertEqual(401, resp.status_code)
+
+
+@utils.parameterized_test_case
+class ContainersFuzzTestCase(base.TestCase):
+    default_data_template = create_container_data
+
+    def setUp(self):
+        super(ContainersFuzzTestCase, self).setUp()
+        self.secret_behaviors = secret_behaviors.SecretBehaviors(self.client)
+        self.behaviors = container_behaviors.ContainerBehaviors(self.client)
+
+        # Setting up three secrets for building containers
+        self.secret_ref_1 = self._create_a_secret()
+        self.secret_ref_2 = self._create_a_secret()
+        self.secret_ref_3 = self._create_a_secret()
+
+        self.default_data = copy.deepcopy(self.default_data_template)
+
+        default_secret_refs = self.default_data['secret_refs']
+        default_secret_refs[0]['secret_ref'] = self.secret_ref_1
+        default_secret_refs[1]['secret_ref'] = self.secret_ref_2
+        default_secret_refs[2]['secret_ref'] = self.secret_ref_3
+
+    def tearDown(self):
+        self.secret_behaviors.delete_all_created_secrets()
+        super(ContainersFuzzTestCase, self).tearDown()
+
+    def _create_a_secret(self):
+        secret_defaults_data = {
+            "name": "AES key",
+            "expiration": "2018-02-28T19:14:44.180394",
+            "algorithm": "aes",
+            "bit_length": 256,
+            "mode": "cbc",
+            "payload": "gF6+lLoF3ohA9aPRpt+6bQ==",
+            "payload_content_type": "application/octet-stream",
+            "payload_content_encoding": "base64",
+        }
+
+        secret_model = secret_models.SecretModel(**secret_defaults_data)
+        resp, secret_ref = self.secret_behaviors.create_secret(secret_model)
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNotNone(secret_ref)
+
+        return secret_ref
+
+    # CONTENT TYPES IN HEADERS #
+    """
+    FAILING: multipart/form
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('content_types'))
+    @testcase.attr('negative', 'security')
+    def test_create_junk_content_type_header(self, payload):
+        """Attempt to create a container with junk Content-Type headers
+
+        Should return 415"""
+        model = container_models.ContainerModel(**self.default_data)
+        headers = {
+            'Content-Type': payload
+        }
+        resp, container_ref = self.behaviors.create_container(
+            model, extra_headers=headers
+        )
+        self.assertEqual(415, resp.status_code)
+
+    # CONTAINER LISTING #
+
+    """
+    FAILING (500): extreme_overflow
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('bad_numbers'))
+    @testcase.attr('negative', 'security')
+    def test_get_container_list_junk_offset(self, payload):
+        """Attempts to get a list of containers using junk 'offset' parameter
+
+        Should return non-500 status code"""
+        resp, containers, next_ref, prev_ref = self.behaviors.get_containers(
+            offset=payload
+        )
+        self.assertNotIn(resp.status_code, range(500, 600))
+
+    """
+    ALL GOOD
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('bad_numbers'))
+    @testcase.attr('negative', 'security')
+    def test_get_container_list_junk_limit(self, payload):
+        """Attempts to get a list of containers using junk 'limit' parameter
+
+        Should return non-500 status code"""
+        resp, containers, next_ref, prev_ref = self.behaviors.get_containers(
+            limit=payload
+        )
+        self.assertNotIn(resp.status_code, range(500, 600))
+
+    # CONTAINER CREATION #
+
+    """
+    ALL GOOD
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @testcase.attr('negative', 'security')
+    def test_container_create_junk_name(self, payload):
+        """Sends junk name for container creation
+
+        Should return 400"""
+        model = container_models.ContainerModel(**self.default_data)
+
+        overrides = {
+            'name': payload
+        }
+        model.override_values(**overrides)
+        resp, container_ref = self.behaviors.create_container(model)
+        self.assertNotIn(resp.status_code, range(500, 600))
+
+    """
+    ALL GOOD
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @testcase.attr('negative', 'security')
+    def test_secret_create_junk_type(self, payload):
+        """Sends junk type for container creation
+
+        Should return 400"""
+        model = container_models.ContainerModel(**self.default_data)
+        overrides = {
+            'type': payload
+        }
+        model.override_values(**overrides)
+        resp, container_ref = self.behaviors.create_container(model)
+        self.assertEqual(400, resp.status_code)
+
+    """
+    ALL GOOD
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @testcase.attr('negative', 'security')
+    def test_container_create_junk_secret_names(self, payload):
+        """Sends junk secret names for container creation
+
+        Should return 400"""
+        model = container_models.ContainerModel(**self.default_data)
+        refs = [
+            {
+                'name': payload,
+                'secret_ref': self.secret_ref_1
+            }
+        ]
+        overrides = {
+            'secret_refs': refs
+        }
+        model.override_values(**overrides)
+        resp, container_ref = self.behaviors.create_container(model)
+        self.assertNotIn(resp.status_code, range(500, 600))
+
+    """
+    ALL GOOD
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @testcase.attr('negative', 'security')
+    def test_rsa_container_create_junk_secret_names(self, payload):
+        """Sends junk secret names for RSA container creation
+
+        Should return 400"""
+        model = container_models.ContainerModel(**self.default_data)
+        refs = [
+            {
+                'name': payload,
+                'secret_ref': self.secret_ref_1
+            },
+            {
+                'name': payload,
+                'secret_ref': self.secret_ref_2
+            },
+            {
+                'name': payload,
+                'secret_ref': self.secret_ref_3
+            },
+        ]
+        overrides = {
+            'secret_refs': refs,
+            'type': 'rsa'
+        }
+        model.override_values(**overrides)
+        resp, container_ref = self.behaviors.create_container(model)
+        self.assertEqual(400, resp.status_code)
+
+    """
+    DONE
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @testcase.attr('negative', 'security')
+    def test_certificate_container_create_junk_secret_names(self, payload):
+        """Sends junk secret names for certificate container creation
+
+        Should return 400"""
+        model = container_models.ContainerModel(**self.default_data)
+        refs = [
+            {
+                'name': payload,
+                'secret_ref': self.secret_ref_1
+            },
+            {
+                'name': payload,
+                'secret_ref': self.secret_ref_2
+            },
+            {
+                'name': payload,
+                'secret_ref': self.secret_ref_3
+            },
+        ]
+
+        overrides = {
+            'secret_refs': refs,
+            'type': 'certificate'
+        }
+        model.override_values(**overrides)
+        resp, container_ref = self.behaviors.create_container(model)
+        self.assertEqual(400, resp.status_code)
+
+    """
+    ALL GOOD
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @testcase.attr('negative', 'security')
+    def test_container_create_junk_secret_refs(self, payload):
+        """Sends junk secret_refs for container creation
+
+        Should return 400"""
+        model = container_models.ContainerModel(**self.default_data)
+        refs = [
+            {
+                'name': 'test',
+                'secret_ref': payload
+            }
+        ]
+        overrides = {
+            'secret_refs': refs
+        }
+        model.override_values(**overrides)
+        resp, container_ref = self.behaviors.create_container(model)
+        self.assertEqual(400, resp.status_code)
+
+    """
+    ALL GOOD
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('junk_urls'))
+    @testcase.attr('negative', 'security')
+    def test_container_create_junk_secret_ref_urls(self, payload):
+        """Sends junk secret_refs for container creation
+
+        Should return 400"""
+        model = container_models.ContainerModel(**self.default_data)
+        refs = [
+            {
+                'name': 'test',
+                'secret_ref': payload
+            }
+        ]
+        overrides = {
+            'secret_refs': refs
+        }
+        model.override_values(**overrides)
+        resp, container_ref = self.behaviors.create_container(model)
+        self.assertEqual(400, resp.status_code)
+
+    # DELETE CONTAINER #
+    """
+    ALL FAILING
+    """
+    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @testcase.attr('negative', 'security')
+    def test_container_delete_junk_container_ref(self, payload):
+        """Attempt to delete a container with a junk container reference
+
+        Should return 404"""
+        resp = self.behaviors.delete_container(payload, expected_fail=True)
+        self.assertEqual(404, resp.status_code)
