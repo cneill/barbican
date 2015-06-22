@@ -60,12 +60,13 @@ class Fuzzer():
             'msg_http': 'message/http',
             'msg_partial': 'message/partial',
             'junk': 'junk',
-            'app_json_w_null': 'application/json' + chr(0x00),
-            'octet_stream_w_null': 'application/octet-stream' + chr(0x00),
-            'text_plain_w_null': 'text/plain' + chr(0x00),
-            'app_json_w_0xff': 'application/json' + unichr(0xff),
-            'octet_stream_w_0xff': 'application/octet-stream' + unichr(0xff),
-            'text_plain_w_0xff': 'text/plain' + unichr(0xff)
+            # 'app_json_w_null': 'application/json' + chr(0x00),
+            # 'octet_stream_w_null': 'application/octet-stream' + chr(0x00),
+            # 'text_plain_w_null': 'text/plain' + chr(0x00),
+            # 'app_json_w_0xff': 'application/json' + unichr(0xff),
+            # 'octet_stream_w_0xff': 'application/octet-stream' + unichr(0xff),
+            # 'text_plain_w_0xff': 'text/plain' + unichr(0xff)
+            # ^ these cause errors in 'requests'
         }
 
         self.date = {
