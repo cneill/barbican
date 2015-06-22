@@ -155,7 +155,7 @@ class Fuzzer():
             'javascript': 'javascript:alert(1);',
             'data_img_b64': 'data:image/png;base64,junkjunk',
             'data_xml_b64': 'data:applicaton/xml;charset=utf-8,'
-                            + urllib.urlencode('<?xml version="1.0" ?>'),
+                            + urllib.quote_plus('<?xml version="1.0" ?>'),
             'file_etc_passwd': 'file:///etc/passwd',
             'relative_etc_passwd': '///etc/passwd',
             'back_slashes': '\etc\passwd',
