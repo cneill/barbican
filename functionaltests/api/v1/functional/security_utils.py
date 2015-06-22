@@ -24,12 +24,12 @@ class Fuzzer():
         self.types = [
             'all', 'sql', 'xss', 'xml', 'json', 'ascii', 'unicode',
             'content_types', 'date', 'huge', 'junk', 'json_recursion',
-            'date', 'bad_numbers'
+            'date', 'bad_numbers', 'bad_urls'
         ]
 
         self.named_types = [
             'content_types', 'date', 'huge', 'junk', 'xss', 'quick',
-            'bad_numbers'
+            'bad_numbers', 'bad_urls'
         ]
 
         self.encoding_types = [
@@ -149,6 +149,19 @@ class Fuzzer():
             'urlencoded_nullbyte_id': '%0aid',
             'backticks_id': '`id`',
             'close_parens_id': ');id'
+        }
+
+        self.bad_urls = {
+            'javascript': 'javascript:alert(1);',
+            'data_img_b64': 'data:image/png;base64,junkjunk',
+            'data_xml_b64': 'data:applicaton/xml;charset=utf-8,'
+                            + urllib.urlencode('<?xml version="1.0" ?>'),
+            'file_etc_passwd': 'file:///etc/passwd',
+            'relative_etc_passwd': '///etc/passwd',
+            'back_slashes': '\etc\passwd',
+            'junk_w_nullbyte': 'http://junk' + chr(0x00) + '.junk',
+            'junk_w_0x80': 'http://junk' + chr(0x80) + '.junk',
+            'junk_w_urlencoded_nullbyte': 'http://junk.junk/%00'
         }
 
     def encode_string(self, string, encoding=None):
