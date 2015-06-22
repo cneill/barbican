@@ -121,8 +121,8 @@ class Fuzzer():
         }
 
         self.junk = {
-            'nullbyte': chr(0x00),
-            'higher_ascii': chr(0x80) + chr(0xfe),
+            'nullbyte': unichr(0x00),
+            'higher_ascii': unichr(0x80) + unichr(0xfe),
             'higher_unicode': unichr(0x1111) + unichr(0xffff),
             'unicode_single_quote': unichr(0x2018),
             'unicode_double_quote': unichr(0x201c),
