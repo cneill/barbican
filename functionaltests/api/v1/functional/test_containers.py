@@ -691,9 +691,9 @@ class ContainersFuzzTestCase(base.TestCase):
         self.assertEqual(400, resp.status_code)
 
     """
-    ALL GOOD
+    BORKED
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('junk_urls'))
+    @utils.parameterized_dataset(fuzzer.get_dataset('bad_urls'))
     @testcase.attr('negative', 'security')
     def test_container_create_junk_secret_ref_urls(self, payload):
         """Sends junk secret_refs for container creation
@@ -703,7 +703,7 @@ class ContainersFuzzTestCase(base.TestCase):
         refs = [
             {
                 'name': 'test',
-                'secret_ref': payload
+                'secret_ref': payload.encode('utf-8')
             }
         ]
         overrides = {
@@ -723,5 +723,7 @@ class ContainersFuzzTestCase(base.TestCase):
         """Attempt to delete a container with a junk container reference
 
         Should return 404"""
-        resp = self.behaviors.delete_container(payload, expected_fail=True)
+        resp = self.behaviors.delete_container(
+            payload.encode('utf-8'), expected_fail=True
+        )
         self.assertEqual(404, resp.status_code)
