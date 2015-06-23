@@ -715,7 +715,7 @@ class ContainersFuzzTestCase(base.TestCase):
 
     # DELETE CONTAINER #
     """
-    ALL FAILING
+    ALL GOOD
     """
     @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
     @testcase.attr('negative', 'security')
