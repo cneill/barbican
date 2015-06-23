@@ -143,9 +143,9 @@ class Fuzzer():
             'semicolon_id': ';id',
             'or_id': '||id',
             'and_id': '&&id',
-            'nullbyte_id': chr(0) + 'id',
+            'nullbyte_id': unichr(0x00) + 'id',
             'urlencoded_nullbyte_id': '%00id',
-            'newline_id': chr(0x0a) + 'id',
+            'newline_id': unichr(0x0a) + 'id',
             'urlencoded_nullbyte_id': '%0aid',
             'backticks_id': '`id`',
             'close_parens_id': ');id'
@@ -159,8 +159,8 @@ class Fuzzer():
             'file_etc_passwd': 'file:///etc/passwd',
             'relative_etc_passwd': '///etc/passwd',
             'back_slashes': '\etc\passwd',
-            'junk_w_nullbyte': 'http://junk' + chr(0x00) + '.junk',
-            'junk_w_0x80': 'http://junk' + chr(0x80) + '.junk',
+            'junk_w_nullbyte': 'http://junk' + unichr(0x00) + '.junk',
+            'junk_w_0x80': 'http://junk' + unichr(0x80) + '.junk',
             'junk_w_urlencoded_nullbyte': 'http://junk.junk/%00'
         }
 
