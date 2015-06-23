@@ -126,7 +126,6 @@ class Fuzzer():
             'higher_unicode': unichr(0x1111) + unichr(0xffff),
             'unicode_single_quote': unichr(0x2018),
             'unicode_double_quote': unichr(0x201c),
-            'huge': 'a' * 100000
         }
 
         self.bad_numbers = {
