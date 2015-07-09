@@ -1,8 +1,23 @@
 #!/usr/bin/env python
+# Copyright 2010-2015 OpenStack LLC.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+import argparse
 import os
 import sys
-import argparse
 
 sys.path.insert(0, os.getcwd())
 
@@ -11,13 +26,14 @@ from barbican.model.migration import commands
 from oslo_log import log
 
 
-class DatabaseManager:
-    """
-    Builds and executes a CLI parser to manage the Barbican database,
-    using Alembic commands.
+class DatabaseManager(object):
+    """Builds and executes a CLI parser to manage the Barbican
+
+    This extends the Alembic commands.
     """
 
-    def __init__(self):
+    def __init__(self, conf):
+        self.conf = conf
         self.parser = self.get_main_parser()
         self.subparsers = self.parser.add_subparsers(
             title='subcommands',
@@ -31,7 +47,7 @@ class DatabaseManager:
     def get_main_parser(self):
         """Create top-level parser and arguments."""
         parser = argparse.ArgumentParser(description='Barbican DB manager.')
-        parser.add_argument('--dburl', '-d', default=None,
+        parser.add_argument('--dburl', '-d', default=self.conf.sql_connection,
                             help='URL to the database.')
 
         return parser
@@ -125,12 +141,12 @@ def _exception_is_successfull_exit(thrown_exception):
 def main():
     # Import and configure logging.
     CONF = config.CONF
-    log.setup(CONF, 'barbican-db-manage')
+    log.setup(CONF, 'barbican')
     LOG = log.getLogger(__name__)
     LOG.debug("Performing database schema migration...")
 
     try:
-        dm = DatabaseManager()
+        dm = DatabaseManager(CONF)
         dm.execute()
     except Exception as ex:
         if _exception_is_successfull_exit(ex):
