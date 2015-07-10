@@ -277,3 +277,124 @@ def get_container_req(secret_ref):
     return {"name": "testcontainer",
             "type": "generic",
             "secret_refs": [{'name': 'secret1', 'secret_ref': secret_ref}]}
+
+
+class AclUnauthedTestCase(base.TestCase):
+    """Functional tests exercising ACL Features"""
+    def setUp(self):
+        super(AclUnauthedTestCase, self).setUp()
+        self.secret_behaviors = secret_behaviors.SecretBehaviors(self.client)
+        self.container_behaviors = container_behaviors.ContainerBehaviors(
+            self.client)
+        self.acl_behaviors = acl_behaviors.AclBehaviors(self.client)
+
+    def tearDown(self):
+        self.acl_behaviors.delete_all_created_acls()
+        self.secret_behaviors.delete_all_created_secrets()
+        self.container_behaviors.delete_all_created_containers()
+        super(AclUnauthedTestCase, self).tearDown()
+
+# ----------------------- Helper Functions ---------------------------
+    """ Modified to not use authentication """
+    def store_secret(self, user_name=creator_a, admin=admin_a):
+        test_model = secret_models.SecretModel(
+            **get_default_secret_data())
+        resp, secret_ref = self.secret_behaviors.create_secret(
+            test_model, user_name=user_name, admin=admin)
+        self.assertEqual(201, resp.status_code)
+        return secret_ref
+
+    def get_secret(self, secret_ref, user_name=creator_a):
+        resp = self.secret_behaviors.get_secret(
+            secret_ref, 'application/octet-stream',
+            user_name=user_name)
+        return resp.status_code
+
+    def set_secret_acl(self, secret_ref, acl, use_auth=True,
+                       user_name=creator_a):
+        test_model = acl_models.AclModel(**acl)
+        resp = self.acl_behaviors.create_acl(
+            secret_ref, test_model, use_auth=use_auth, user_name=user_name)
+        return resp
+
+    def store_container(self, user_name=creator_a, admin=admin_a):
+        secret_ref = self.store_secret(user_name=user_name, admin=admin)
+
+        test_model = container_models.ContainerModel(
+            **get_container_req(secret_ref))
+        resp, container_ref = self.container_behaviors.create_container(
+            test_model, user_name=user_name, admin=admin)
+        self.assertEqual(201, resp.status_code)
+        return container_ref
+
+    def get_container(self, container_ref, user_name=creator_a):
+        resp = self.container_behaviors.get_container(
+            container_ref, user_name=user_name)
+        return resp.status_code
+
+    def set_container_acl(self, container_ref, acl, use_auth=True,
+                          user_name=creator_a):
+        test_model = acl_models.AclModel(**acl)
+        resp = self.acl_behaviors.create_acl(
+            container_ref, test_model, use_auth=use_auth, user_name=user_name)
+        return resp
+
+# ----------------------- Secret ACL Tests ---------------------------
+
+    def test_secret_read_acl_no_token(self):
+        secret_ref = self.store_secret()
+        acl_ref = '{0}/acl'.format(secret_ref)
+        resp = self.acl_behaviors.get_acl(acl_ref, use_auth=False)
+        self.assertEqual(401, resp.status_code)
+
+    def test_secret_set_acl_no_token(self):
+        secret_ref = self.store_secret()
+        resp = self.set_secret_acl(secret_ref, get_rbac_only(), use_auth=False)
+        self.assertEqual(401, resp.status_code)
+
+    def test_secret_delete_acl_no_token(self):
+        secret_ref = self.store_secret()
+        acl_ref = '{0}/acl'.format(secret_ref)
+        resp = self.acl_behaviors.delete_acl(
+            acl_ref, expected_fail=True, use_auth=False
+        )
+        self.assertEqual(401, resp.status_code)
+
+    def test_secret_update_acl_no_token(self):
+        secret_ref = self.store_secret()
+        acl_ref = '{0}/acl'.format(secret_ref)
+        resp = self.set_secret_acl(secret_ref, get_rbac_only())
+        self.assertEqual(200, resp.status_code)
+        resp = self.acl_behaviors.update_acl(acl_ref, {}, use_auth=False)
+        self.assertEqual(401, resp.status_code)
+
+# ----------------------- Container ACL Tests ---------------------------
+
+    def test_container_read_acl_no_token(self):
+        container_ref = self.store_container()
+        acl_ref = '{0}/acl'.format(container_ref)
+        resp = self.acl_behaviors.get_acl(acl_ref, use_auth=False)
+        self.assertEqual(401, resp.status_code)
+
+    def test_container_set_acl_no_token(self):
+        container_ref = self.store_container()
+        resp = self.set_container_acl(
+            container_ref, get_rbac_only(), use_auth=False
+        )
+        self.assertEqual(401, resp.status_code)
+
+    def test_container_delete_acl_no_token(self):
+        container_ref = self.store_container()
+        acl_ref = '{0}/acl'.format(container_ref)
+        resp = self.acl_behaviors.delete_acl(
+            acl_ref, expected_fail=True, use_auth=False
+        )
+        self.assertEqual(401, resp.status_code)
+
+    def test_container_update_acl_no_token(self):
+        container_ref = self.store_container()
+        acl_ref = '{0}/acl'.format(container_ref)
+        resp = self.set_container_acl(container_ref, get_rbac_only())
+        self.assertEqual(200, resp.status_code)
+        resp = self.acl_behaviors.update_acl(acl_ref, {}, use_auth=False)
+        self.assertEqual(401, resp.status_code)
