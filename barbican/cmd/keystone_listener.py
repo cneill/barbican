@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 # Copyright 2014 Hewlett-Packard Development Company, L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,11 +40,11 @@ if os.path.exists(os.path.join(possible_topdir, 'barbican', '__init__.py')):
 
 
 from barbican.common import config
-from barbican.openstack.common import log
-from barbican.openstack.common import service
 from barbican import queue
 from barbican.queue import keystone_listener
-from oslo_config import cfg
+
+from oslo_log import log
+from oslo_service import service
 
 
 def fail(returncode, e):
@@ -68,10 +67,10 @@ if __name__ == '__main__':
 
         if getattr(getattr(CONF, queue.KS_NOTIFICATIONS_GRP_NAME), 'enable'):
             service.launch(
+                CONF,
                 keystone_listener.MessageServer(CONF)
             ).wait()
         else:
             LOG.info("Exiting as Barbican Keystone listener is not enabled...")
     except RuntimeError as e:
         fail(1, e)
-

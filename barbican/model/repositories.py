@@ -61,7 +61,6 @@ _ORDER_RETRY_TASK_REPOSITORY = None
 _PREFERRED_CA_REPOSITORY = None
 _PROJECT_REPOSITORY = None
 _PROJECT_CA_REPOSITORY = None
-_PROJECT_SECRET_REPOSITORY = None
 _SECRET_ACL_REPOSITORY = None
 _SECRET_META_REPOSITORY = None
 _SECRET_REPOSITORY = None
@@ -312,9 +311,6 @@ def delete_all_project_resources(project_id):
         project_id, suppress_exception=False, session=session)
     kek_repo = get_kek_datum_repository()
     kek_repo.delete_project_entities(
-        project_id, suppress_exception=False, session=session)
-    project_secret_repo = get_project_secret_repository()
-    project_secret_repo.delete_project_entities(
         project_id, suppress_exception=False, session=session)
     project_repo = get_project_repository()
     project_repo.delete_project_entities(
@@ -610,58 +606,24 @@ class SecretRepo(BaseRepo):
         if secret_type:
             query = query.filter(models.Secret.secret_type == secret_type)
 
-        query_projects, query_old_project_assoc = (
-            self._build_filter_secrets_by_project_queries(
-                query, external_project_id))
+        query = query.join(models.Project)
+        query = query.filter(models.Project.external_id == external_project_id)
 
-        total, entities = self._page_old_and_new_secret_project_assocs(
-            query_projects, query_old_project_assoc, offset, limit)
+        total = query.count()
+        end_offset = offset + limit
+
+        LOG.debug('Retrieving from %s to %s', offset, end_offset)
+
+        query = query.limit(limit).offset(offset)
+        entities = query.all()
+
+        LOG.debug('Number entities retrieved: %s out of %s',
+                  len(entities), total)
 
         if total <= 0 and not suppress_exception:
             _raise_no_entities_found(self._do_entity_name())
 
         return entities, offset, limit, total
-
-    def _build_filter_secrets_by_project_queries(self, query, project_id):
-        query_projects = query.filter(models.Secret.project_id == project_id)
-
-        query_old_project_assoc = query.join(models.ProjectSecret,
-                                             models.Secret.project_assocs)
-        query_old_project_assoc = query_old_project_assoc.join(
-            models.Project, models.ProjectSecret.projects)
-        query_old_project_assoc = query_old_project_assoc.filter(
-            models.Project.external_id == project_id)
-
-        return query_projects, query_old_project_assoc
-
-    def _page_old_and_new_secret_project_assocs(
-            self, query_projects, query_old_project_assoc, offset, limit):
-        project_count = query_projects.count()
-        old_project_count = query_old_project_assoc.count()
-
-        total = project_count + old_project_count
-        end_offset = offset + limit
-        LOG.debug('Retrieving from %s to %s', offset, end_offset)
-        # Page over new-association secrets first, then old-association secrets
-        if end_offset < project_count:
-            query_project = query_projects.limit(limit).offset(offset)
-            entities = query_project.all()
-        elif offset >= project_count:
-            query_old_project_assoc = (
-                query_old_project_assoc.limit(limit).offset(
-                    offset - project_count))
-            entities = query_old_project_assoc.all()
-        else:
-            query_project = query_projects.limit(limit).offset(offset)
-            entities = query_project.all()
-            query_old_project_assoc = query_old_project_assoc.limit(
-                end_offset - project_count + 1).offset(0)
-            entities.extend(query_old_project_assoc.all())
-
-        LOG.debug('Number entities retrieved: %s out of %s',
-                  len(entities), total)
-
-        return total, entities
 
     def _do_entity_name(self):
         """Sub-class hook: return entity name, such as for debugging."""
@@ -679,14 +641,9 @@ class SecretRepo(BaseRepo):
         query = session.query(models.Secret)
         query = query.filter_by(id=entity_id, deleted=False)
         query = query.filter(expiration_filter)
-        query_projects, query_old_project_assoc = (
-            self._build_filter_secrets_by_project_queries(
-                query, external_project_id))
-
-        if query_projects.count() > 0:
-            return query_projects
-        else:
-            return query_old_project_assoc
+        query = query.join(models.Project)
+        query = query.filter(models.Project.external_id == external_project_id)
+        return query
 
     def _do_validate(self, values):
         """Sub-class hook: validate values."""
@@ -695,18 +652,11 @@ class SecretRepo(BaseRepo):
     def _build_get_project_entities_query(self, project_id, session):
         """Builds query for retrieving Secrets associated with a given project
 
-        Discovery is done via a ProjectSecret association.
-
         :param project_id: id of barbican project entity
         :param session: existing db session reference.
         """
         query = session.query(models.Secret).filter_by(deleted=False)
-
-        query_projects, query_old_project_assoc = (
-            self._build_filter_secrets_by_project_queries(
-                query, project_id))
-
-        query = query_projects.union(query_old_project_assoc)
+        query = query.filter(models.Secret.project_id == project_id)
 
         return query
 
@@ -877,37 +827,12 @@ class KEKDatumRepo(BaseRepo):
             project_id=project_id).filter_by(deleted=False)
 
 
-class ProjectSecretRepo(BaseRepo):
-    """Repository for the ProjectSecret entity."""
-
-    def _do_entity_name(self):
-        """Sub-class hook: return entity name, such as for debugging."""
-        return "ProjectSecret"
-
-    def _do_build_get_query(self, entity_id, external_project_id, session):
-        """Sub-class hook: build a retrieve query."""
-        return session.query(models.ProjectSecret).filter_by(id=entity_id)
-
-    def _do_validate(self, values):
-        """Sub-class hook: validate values."""
-        pass
-
-    def _build_get_project_entities_query(self, project_id, session):
-        """Builds query for retrieving ProjectSecret related to given project.
-
-        :param project_id: id of barbican project entity
-        :param session: existing db session reference.
-        """
-        return session.query(models.ProjectSecret).filter_by(
-            project_id=project_id).filter_by(deleted=False)
-
-
 class OrderRepo(BaseRepo):
     """Repository for the Order entity."""
 
     def get_by_create_date(self, external_project_id, offset_arg=None,
-                           limit_arg=None, suppress_exception=False,
-                           session=None):
+                           limit_arg=None, meta_arg=None,
+                           suppress_exception=False, session=None):
         """Returns a list of orders
 
         The list is ordered by the date they were created at and paged
@@ -917,6 +842,7 @@ class OrderRepo(BaseRepo):
         :param offset_arg: The entity number where the query result should
                            start.
         :param limit_arg: The maximum amount of entities in the result set.
+        :param meta_arg: Optional meta field used to filter results.
         :param suppress_exception: Whether NoResultFound exceptions should be
                                    suppressed.
         :param session: SQLAlchemy session object.
@@ -931,6 +857,10 @@ class OrderRepo(BaseRepo):
         query = session.query(models.Order)
         query = query.order_by(models.Order.created_at)
         query = query.filter_by(deleted=False)
+
+        if meta_arg:
+            query = query.filter(models.Order.meta.contains(meta_arg))
+
         query = query.join(models.Project, models.Order.project)
         query = query.filter(models.Project.external_id == external_project_id)
 
@@ -938,7 +868,7 @@ class OrderRepo(BaseRepo):
         end = offset + limit
         LOG.debug('Retrieving from %s to %s', start, end)
         total = query.count()
-        entities = query[start:end]
+        entities = query.offset(start).limit(limit).all()
         LOG.debug('Number entities retrieved: %s out of %s',
                   len(entities), total
                   )
@@ -1120,7 +1050,7 @@ class OrderRetryTaskRepo(BaseRepo):
         end = offset + limit
         LOG.debug('Retrieving from %s to %s', start, end)
         total = query.count()
-        entities = query[start:end]
+        entities = query.offset(start).limit(limit).all()
         LOG.debug('Number entities retrieved: %s out of %s',
                   len(entities), total
                   )
@@ -1149,8 +1079,8 @@ class ContainerRepo(BaseRepo):
     """Repository for the Container entity."""
 
     def get_by_create_date(self, external_project_id, offset_arg=None,
-                           limit_arg=None, suppress_exception=False,
-                           session=None):
+                           limit_arg=None, name_arg=None,
+                           suppress_exception=False, session=None):
         """Returns a list of containers
 
         The list is ordered by the date they were created at and paged
@@ -1165,6 +1095,10 @@ class ContainerRepo(BaseRepo):
         query = session.query(models.Container)
         query = query.order_by(models.Container.created_at)
         query = query.filter_by(deleted=False)
+
+        if name_arg:
+            query = query.filter(models.Container.name.like(name_arg))
+
         query = query.join(models.Project, models.Container.project)
         query = query.filter(models.Project.external_id == external_project_id)
 
@@ -1172,7 +1106,7 @@ class ContainerRepo(BaseRepo):
         end = offset + limit
         LOG.debug('Retrieving from %s to %s', start, end)
         total = query.count()
-        entities = query[start:end]
+        entities = query.offset(start).limit(limit).all()
         LOG.debug('Number entities retrieved: %s out of %s',
                   len(entities), total
                   )
@@ -1270,7 +1204,7 @@ class ContainerConsumerRepo(BaseRepo):
         end = offset + limit
         LOG.debug('Retrieving from %s to %s', start, end)
         total = query.count()
-        entities = query[start:end]
+        entities = query.offset(start).limit(limit).all()
         LOG.debug('Number entities retrieved: %s out of %s',
                   len(entities), total
                   )
@@ -1374,7 +1308,7 @@ class TransportKeyRepo(BaseRepo):
         end = offset + limit
         LOG.debug('Retrieving from %s to %s', start, end)
         total = query.count()
-        entities = query[start:end]
+        entities = query.offset(start).limit(limit).all()
         LOG.debug('Number of entities retrieved: %s out of %s',
                   len(entities), total)
 
@@ -1440,7 +1374,7 @@ class CertificateAuthorityRepo(BaseRepo):
         end = offset + limit
         LOG.debug('Retrieving from %s to %s', start, end)
         total = query.count()
-        entities = query[start:end]
+        entities = query.offset(start).limit(limit).all()
         LOG.debug('Number entities retrieved: %s out of %s',
                   len(entities), total
                   )
@@ -1594,7 +1528,7 @@ class ProjectCertificateAuthorityRepo(BaseRepo):
         end = offset + limit
         LOG.debug('Retrieving from %s to %s', start, end)
         total = query.count()
-        entities = query[start:end]
+        entities = query.offset(start).limit(limit).all()
         LOG.debug('Number entities retrieved: %s out of %s',
                   len(entities), total
                   )
@@ -1661,7 +1595,7 @@ class PreferredCertificateAuthorityRepo(BaseRepo):
         end = offset + limit
         LOG.debug('Retrieving from %s to %s', start, end)
         total = query.count()
-        entities = query[start:end]
+        entities = query.offset(start).limit(limit).all()
         LOG.debug('Number entities retrieved: %s out of %s',
                   len(entities), total
                   )
@@ -1989,12 +1923,6 @@ def get_project_ca_repository():
     global _PROJECT_CA_REPOSITORY
     return _get_repository(_PROJECT_CA_REPOSITORY,
                            ProjectCertificateAuthorityRepo)
-
-
-def get_project_secret_repository():
-    """Returns a singleton ProjectSecret repository instance."""
-    global _PROJECT_SECRET_REPOSITORY
-    return _get_repository(_PROJECT_SECRET_REPOSITORY, ProjectSecretRepo)
 
 
 def get_secret_acl_repository():

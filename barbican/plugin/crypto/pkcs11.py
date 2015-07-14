@@ -16,7 +16,6 @@ import textwrap
 
 import cffi
 from cryptography.hazmat.primitives import padding
-from oslo_serialization import jsonutils as json
 
 from barbican.common import exception
 from barbican.common import utils
@@ -347,7 +346,8 @@ class PKCS11(object):
     def perform_rng_self_test(self, session):
         test_random = self.generate_random(100, session)
         if self.ffi.buffer(test_random, 100)[:] == b"\x00" * 100:
-            raise P11CryptoPluginException("Apparent RNG self-test failure.")
+            raise P11CryptoPluginException(u._(
+                "Apparent RNG self-test failure."))
 
     def open_session(self, slot):
         session_ptr = self.ffi.new("CK_SESSION_HANDLE *")
@@ -410,7 +410,7 @@ class PKCS11(object):
                 val_list.append(self.ffi.new("char []", attr.value))
                 attributes[index].value_len = len(attr.value)
             else:
-                raise TypeError("Unknown attribute type provided.")
+                raise TypeError(u._("Unknown attribute type provided."))
 
             attributes[index].value = val_list[-1]
 
@@ -486,7 +486,7 @@ class PKCS11(object):
         ck_attributes = self.build_attributes([
             Attribute(CKA_CLASS, CKO_SECRET_KEY),
             Attribute(CKA_KEY_TYPE, CKK_AES),
-            Attribute(CKA_LABEL, mkek_label)
+            Attribute(CKA_LABEL, str(mkek_label))
         ])
         rv = self.lib.C_FindObjectsInit(
             session, ck_attributes.template, len(ck_attributes.template)
@@ -542,6 +542,44 @@ class PKCS11(object):
 
         self.check_error(rv)
         return object_handle_ptr[0]
+
+    def rewrap_kek(self, iv, wrapped_key, hmac, mkek_label, hmac_label,
+                   key_length, session):
+        unwrapped_kek = self.unwrap_key(iv, hmac, wrapped_key, mkek_label,
+                                        hmac_label, session)
+        mkek = self.key_handles[self.current_mkek_label]
+
+        iv = self.generate_random(16, session)
+        mech = self.ffi.new("CK_MECHANISM *")
+        mech.mechanism = CKM_AES_CBC_PAD
+        mech.parameter = iv
+        mech.parameter_len = 16
+
+        padded_length = key_length + self.block_size
+
+        buf = self.ffi.new("CK_BYTE[{0}]".format(padded_length))
+        buf_len = self.ffi.new("CK_ULONG *", padded_length)
+
+        rv = self.lib.C_WrapKey(
+            session,
+            mech,
+            mkek,
+            unwrapped_kek,
+            buf,
+            buf_len
+        )
+        self.check_error(rv)
+
+        wrapped_kek = self.ffi.buffer(buf, buf_len[0])[:]
+        hmac = self.compute_hmac(wrapped_kek, session)
+
+        return {
+            'iv': base64.b64encode(self.ffi.buffer(iv)[:]),
+            'wrapped_key': base64.b64encode(wrapped_kek),
+            'hmac': base64.b64encode(hmac),
+            'mkek_label': self.current_mkek_label,
+            'hmac_label': self.current_hmac_label
+        }
 
     def generate_wrapped_kek(self, kek_label, key_length, session):
         # generate a non-persistent key that is extractable
@@ -612,21 +650,27 @@ class PKCS11(object):
         )
         self.check_error(rv)
 
-    def unwrap_key(self, plugin_meta, session):
+    def unwrap_key(self, iv, hmac, wrapped_key, mkek_label, hmac_label,
+                   session):
         """Unwraps byte string to key handle in HSM.
 
-        :param plugin_meta: kek_meta_dto plugin meta (json string)
+        :param iv: the initialization vector used for wrapped key
+        :param hmac: the hmac for used for wrapped key
+        :param wrapped_key: the key to be unwrapped
+        :param mkek_label: label of mkek for used for wrapped key
+        :param hmac_label: label of hmac for used for wrapped key
+        :param session: active HSM session
+
         :returns: Key handle from HSM. No unencrypted bytes.
         """
-        meta = json.loads(plugin_meta)
-        iv = base64.b64decode(meta['iv'])
-        hmac = base64.b64decode(meta['hmac'])
-        wrapped_key = base64.b64decode(meta['wrapped_key'])
-        mkek = self.get_key_handle(meta['mkek_label'], session)
-        hmac_key = self.get_key_handle(meta['hmac_label'], session)
-        LOG.debug("Unwrapping key with %s mkek label", meta['mkek_label'])
+        iv = base64.b64decode(iv)
+        hmac = base64.b64decode(hmac)
+        wrapped_key = base64.b64decode(wrapped_key)
+        mkek = self.get_key_handle(mkek_label, session)
+        hmac_key = self.get_key_handle(hmac_label, session)
+        LOG.debug("Unwrapping key with %s mkek label", mkek_label)
 
-        LOG.debug("Verifying key with %s hmac label", meta['hmac_label'])
+        LOG.debug("Verifying key with %s hmac label", hmac_label)
         self.verify_hmac(hmac_key, hmac, wrapped_key, session)
 
         unwrapped = self.ffi.new("CK_OBJECT_HANDLE *")
