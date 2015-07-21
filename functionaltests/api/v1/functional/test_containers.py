@@ -697,7 +697,7 @@ class ContainersFuzzTestCase(base.TestCase):
     FAIL (PAYLOAD RETURNED): xss_*
     """
     @utils.parameterized_dataset(fuzzer.get_datasets(
-        ['junk', 'sqli', 'xss', 'rce']
+        ['junk', 'sqli', 'xss', 'rce', 'json_recursion']
     ))
     @testcase.attr('negative', 'security')
     def test_container_create_fuzz_secret_refs_obj(self, fuzz_type, payload):
