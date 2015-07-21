@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import copy
+import urllib
 
 from testtools import testcase
 
@@ -559,64 +560,105 @@ class ContainersFuzzTestCase(base.TestCase):
 
     # CONTENT TYPES IN HEADERS #
     """
-    FAILING: multipart/form
+    7/20
+    FAILING (500): content_types_multipart_form
+    FAILING (PAYLOAD RETURNED):
+    xss_double_bracket
+    xss_iframe_js_link
+    xss_img_js_link
+    xss_tag_close
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('content_types'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['content_types', 'junk', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_create_junk_content_type_header(self, payload):
-        """Attempt to create a container with junk Content-Type headers
+    def test_create_fuzz_content_type_header(self, fuzz_type, payload):
+        """Attempt to create container with fuzz payload as Content-Type header
 
         Should return 415"""
         model = container_models.ContainerModel(**self.default_data)
         headers = {
-            'Content-Type': payload
+            'Content-Type': payload.encode('utf-8')
         }
         resp, container_ref = self.behaviors.create_container(
             model, extra_headers=headers
         )
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
         self.assertEqual(415, resp.status_code)
+
+    # GET CONTAINER #
+
+    """
+    7/20
+    ALL GOOD!
+    """
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'traversal', 'bad_urls', 'sqli', 'xss', 'rce']
+    ))
+    @testcase.attr('negative', 'security')
+    def test_get_container_fuzz_container_ref(self, fuzz_type, payload):
+        """Attempt to get a container using fuzz payload as container ref
+
+        Should return 404"""
+        resp = self.behaviors.get_container(
+            urllib.quote_plus(payload.encode('utf-8'))
+        )
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
+        self.assertEqual(404, resp.status_code)
 
     # CONTAINER LISTING #
 
     """
-    FAILING (500): extreme_overflow
+    7/20
+    FAILING (500): bad_numbers_extreme_overflow
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('bad_numbers'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['bad_numbers', 'junk', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_get_container_list_junk_offset(self, payload):
-        """Attempts to get a list of containers using junk 'offset' parameter
+    def test_get_container_list_fuzz_offset(self, fuzz_type, payload):
+        """Attempt to get list of containers using fuzz payload as 'offset'
+        param
 
         Should return non-500 status code"""
         resp, containers, next_ref, prev_ref = self.behaviors.get_containers(
             offset=payload
         )
-        self.assertNotIn(resp.status_code, range(500, 600))
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
 
     """
+    7/20
     ALL GOOD
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('bad_numbers'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['bad_numbers', 'junk', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_get_container_list_junk_limit(self, payload):
-        """Attempts to get a list of containers using junk 'limit' parameter
+    def test_get_container_list_fuzz_limit(self, fuzz_type, payload):
+        """Attempt to get list of containers using fuzz payload as 'limit'
+        param
 
         Should return non-500 status code"""
         resp, containers, next_ref, prev_ref = self.behaviors.get_containers(
             limit=payload
         )
-        self.assertNotIn(resp.status_code, range(500, 600))
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
 
     # CONTAINER CREATION #
 
     """
-    ALL GOOD
+    7/20
+    FAILING (PAYLOAD RETURNED): xss_*
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_container_create_junk_name(self, payload):
-        """Sends junk name for container creation
+    def test_container_create_fuzz_name(self, fuzz_type, payload):
+        """Send fuzz payload as name for container creation, and attempt
+        retrieval if successful
 
-        Should return 400"""
+        Should return non-500 status code"""
         model = container_models.ContainerModel(**self.default_data)
 
         overrides = {
@@ -624,15 +666,21 @@ class ContainersFuzzTestCase(base.TestCase):
         }
         model.override_values(**overrides)
         resp, container_ref = self.behaviors.create_container(model)
-        self.assertNotIn(resp.status_code, range(500, 600))
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
+        if resp.status_code == 201:
+            resp = self.behaviors.get_container(container_ref)
+            fuzzer.verify_response(resp, fuzz_type=fuzz_type)
 
     """
-    ALL GOOD
+    7/20
+    FAILING (PAYLOAD RETURNED): xss_*
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_secret_create_junk_type(self, payload):
-        """Sends junk type for container creation
+    def test_container_create_fuzz_type(self, fuzz_type, payload):
+        """Sends fuzz payload as type for container creation
 
         Should return 400"""
         model = container_models.ContainerModel(**self.default_data)
@@ -641,15 +689,41 @@ class ContainersFuzzTestCase(base.TestCase):
         }
         model.override_values(**overrides)
         resp, container_ref = self.behaviors.create_container(model)
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
         self.assertEqual(400, resp.status_code)
 
     """
-    ALL GOOD
+    7/20
+    FAIL (PAYLOAD RETURNED): xss_*
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_container_create_junk_secret_names(self, payload):
-        """Sends junk secret names for container creation
+    def test_container_create_fuzz_secret_refs_obj(self, fuzz_type, payload):
+        """Send fuzz payload as secret_refs object for generic container
+        creation
+
+        Should return 400"""
+        model = container_models.ContainerModel(**self.default_data)
+        overrides = {
+            'secret_refs': payload
+        }
+        model.override_values(**overrides)
+        resp, container_ref = self.behaviors.create_container(model)
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
+        self.assertEqual(400, resp.status_code)
+
+    """
+    7/20
+    FAIL (PAYLOAD RETURNED): xss_*
+    """
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'sqli', 'xss', 'rce']
+    ))
+    @testcase.attr('negative', 'security')
+    def test_container_create_fuzz_secret_names(self, fuzz_type, payload):
+        """Send fuzz payload as secret name for generic container creation
 
         Should return 400"""
         model = container_models.ContainerModel(**self.default_data)
@@ -664,29 +738,36 @@ class ContainersFuzzTestCase(base.TestCase):
         }
         model.override_values(**overrides)
         resp, container_ref = self.behaviors.create_container(model)
-        self.assertNotIn(resp.status_code, range(500, 600))
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
+        if resp.status_code == 201:
+            resp = self.behaviors.get_container(container_ref)
+            fuzzer.verify_response(resp, fuzz_type=fuzz_type)
 
     """
-    ALL GOOD
+    7/20
+    ALL GOOD!
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_rsa_container_create_junk_secret_names(self, payload):
-        """Sends junk secret names for RSA container creation
+    def test_rsa_container_create_fuzz_secret_names(self, fuzz_type, payload):
+        """Send fuzz payload as secret names for RSA container creation
 
         Should return 400"""
         model = container_models.ContainerModel(**self.default_data)
+        payload = payload.encode('utf-8')
         refs = [
             {
                 'name': payload,
                 'secret_ref': self.secret_ref_1
             },
             {
-                'name': payload,
+                'name': '{0}1'.format(payload),
                 'secret_ref': self.secret_ref_2
             },
             {
-                'name': payload,
+                'name': '{0}2'.format(payload),
                 'secret_ref': self.secret_ref_3
             },
         ]
@@ -696,29 +777,35 @@ class ContainersFuzzTestCase(base.TestCase):
         }
         model.override_values(**overrides)
         resp, container_ref = self.behaviors.create_container(model)
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
         self.assertEqual(400, resp.status_code)
 
     """
-    DONE
+    7/20
+    ALL GOOD!
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_certificate_container_create_junk_secret_names(self, payload):
-        """Sends junk secret names for certificate container creation
+    def test_certificate_container_create_fuzz_secret_names(
+            self, fuzz_type, payload):
+        """Send fuzz payload as secret names for certificate container creation
 
         Should return 400"""
         model = container_models.ContainerModel(**self.default_data)
+        payload = payload.encode('utf-8')
         refs = [
             {
                 'name': payload,
                 'secret_ref': self.secret_ref_1
             },
             {
-                'name': payload,
+                'name': '{0}1'.format(payload),
                 'secret_ref': self.secret_ref_2
             },
             {
-                'name': payload,
+                'name': '{0}2'.format(payload),
                 'secret_ref': self.secret_ref_3
             },
         ]
@@ -729,15 +816,19 @@ class ContainersFuzzTestCase(base.TestCase):
         }
         model.override_values(**overrides)
         resp, container_ref = self.behaviors.create_container(model)
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
         self.assertEqual(400, resp.status_code)
 
     """
-    ALL GOOD
+    7/20
+    ALL GOOD!
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'traversal', 'bad_urls', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_container_create_junk_secret_refs(self, payload):
-        """Sends junk secret_refs for container creation
+    def test_container_create_fuzz_secret_refs(self, fuzz_type, payload):
+        """Sends fuzz payload as secret_ref for container creation
 
         Should return 400"""
         model = container_models.ContainerModel(**self.default_data)
@@ -752,42 +843,25 @@ class ContainersFuzzTestCase(base.TestCase):
         }
         model.override_values(**overrides)
         resp, container_ref = self.behaviors.create_container(model)
-        self.assertEqual(400, resp.status_code)
-
-    """
-    BORKED
-    """
-    @utils.parameterized_dataset(fuzzer.get_dataset('bad_urls'))
-    @testcase.attr('negative', 'security')
-    def test_container_create_junk_secret_ref_urls(self, payload):
-        """Sends junk secret_refs for container creation
-
-        Should return 400"""
-        model = container_models.ContainerModel(**self.default_data)
-        refs = [
-            {
-                'name': 'test',
-                'secret_ref': payload.encode('utf-8')
-            }
-        ]
-        overrides = {
-            'secret_refs': refs
-        }
-        model.override_values(**overrides)
-        resp, container_ref = self.behaviors.create_container(model)
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
         self.assertEqual(400, resp.status_code)
 
     # DELETE CONTAINER #
     """
-    ALL GOOD
+    7/20
+    ALL GOOD!
     """
-    @utils.parameterized_dataset(fuzzer.get_dataset('junk'))
+    @utils.parameterized_dataset(fuzzer.get_datasets(
+        ['junk', 'traversal', 'bad_urls', 'sqli', 'xss', 'rce']
+    ))
     @testcase.attr('negative', 'security')
-    def test_container_delete_junk_container_ref(self, payload):
-        """Attempt to delete a container with a junk container reference
+    def test_container_delete_fuzz_container_ref(self, fuzz_type, payload):
+        """Attempt to delete a container with a fuzz payload as container
+        reference
 
         Should return 404"""
         resp = self.behaviors.delete_container(
-            payload.encode('utf-8'), expected_fail=True
+            urllib.quote_plus(payload.encode('utf-8')), expected_fail=True
         )
+        fuzzer.verify_response(resp, fuzz_type=fuzz_type)
         self.assertEqual(404, resp.status_code)
